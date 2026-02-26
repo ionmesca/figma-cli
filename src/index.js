@@ -1077,18 +1077,14 @@ variables
 
 variables
   .command('visualize [collection]')
-  .description('Create color swatches on canvas for all color variables')
-  .option('-s, --size <n>', 'Swatch size', '40')
-  .option('-g, --gap <n>', 'Gap between swatches', '4')
+  .description('Create color swatches on canvas (shadcn-style layout)')
   .action(async (collection, options) => {
     checkConnection();
-    const spinner = ora('Creating color swatches...').start();
-
-    const size = parseInt(options.size) || 40;
-    const gap = parseInt(options.gap) || 4;
+    const spinner = ora('Creating color palette...').start();
 
     const code = `(async () => {
 await figma.loadFontAsync({ family: 'Inter', style: 'Medium' });
+await figma.loadFontAsync({ family: 'Inter', style: 'Regular' });
 
 const collections = await figma.variables.getLocalVariableCollectionsAsync();
 const colorVars = await figma.variables.getLocalVariablesAsync('COLOR');
@@ -1104,51 +1100,121 @@ startX += 100;
 
 let totalSwatches = 0;
 
+// shadcn color order
+const colorOrder = ['slate','gray','zinc','neutral','stone','red','orange','amber','yellow','lime','green','emerald','teal','cyan','sky','blue','indigo','violet','purple','fuchsia','pink','rose','white','black'];
+
 for (const col of targetCols) {
   const colVars = colorVars.filter(v => v.variableCollectionId === col.id);
   if (colVars.length === 0) continue;
 
-  // Group by prefix
+  // Group by prefix (handles both "blue/500" and semantic names)
   const groups = {};
+  const semanticGroups = {
+    'background': 'base', 'foreground': 'base', 'border': 'base', 'input': 'base', 'ring': 'base',
+    'primary': 'primary', 'primary-foreground': 'primary',
+    'secondary': 'secondary', 'secondary-foreground': 'secondary',
+    'muted': 'muted', 'muted-foreground': 'muted',
+    'accent': 'accent', 'accent-foreground': 'accent',
+    'card': 'card', 'card-foreground': 'card',
+    'popover': 'popover', 'popover-foreground': 'popover',
+    'destructive': 'destructive', 'destructive-foreground': 'destructive',
+    'chart-1': 'chart', 'chart-2': 'chart', 'chart-3': 'chart', 'chart-4': 'chart', 'chart-5': 'chart',
+  };
   colVars.forEach(v => {
     const parts = v.name.split('/');
-    const prefix = parts.length > 1 ? parts[0] : 'colors';
+    let prefix;
+    if (parts.length > 1) {
+      prefix = parts[0];
+    } else if (v.name.startsWith('sidebar-')) {
+      prefix = 'sidebar';
+    } else {
+      prefix = semanticGroups[v.name] || 'other';
+    }
     if (!groups[prefix]) groups[prefix] = [];
     groups[prefix].push(v);
   });
 
+  // Sort groups
+  const semanticOrder = ['base','primary','secondary','muted','accent','card','popover','destructive','chart','sidebar'];
+  const sortedGroups = Object.entries(groups).sort((a, b) => {
+    const aColorIdx = colorOrder.indexOf(a[0]);
+    const bColorIdx = colorOrder.indexOf(b[0]);
+    const aSemanticIdx = semanticOrder.indexOf(a[0]);
+    const bSemanticIdx = semanticOrder.indexOf(b[0]);
+    if (aColorIdx !== -1 && bColorIdx !== -1) return aColorIdx - bColorIdx;
+    if (aColorIdx !== -1) return -1;
+    if (bColorIdx !== -1) return 1;
+    if (aSemanticIdx !== -1 && bSemanticIdx !== -1) return aSemanticIdx - bSemanticIdx;
+    return a[0].localeCompare(b[0]);
+  });
+
   // Create container
   const container = figma.createFrame();
-  container.name = col.name + ' Palette';
+  container.name = col.name;
   container.x = startX;
   container.y = 0;
   container.layoutMode = 'VERTICAL';
   container.primaryAxisSizingMode = 'AUTO';
   container.counterAxisSizingMode = 'AUTO';
-  container.itemSpacing = 16;
-  container.paddingTop = 24;
-  container.paddingBottom = 24;
-  container.paddingLeft = 24;
-  container.paddingRight = 24;
-  container.fills = [{ type: 'SOLID', color: { r: 0.98, g: 0.98, b: 0.98 } }];
+  container.itemSpacing = 8;
+  container.paddingTop = 32;
+  container.paddingBottom = 32;
+  container.paddingLeft = 32;
+  container.paddingRight = 32;
+  container.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }];
   container.cornerRadius = 16;
+
+  // Title
+  const title = figma.createText();
+  title.characters = col.name;
+  title.fontSize = 20;
+  title.fontName = { family: 'Inter', style: 'Medium' };
+  title.fills = [{ type: 'SOLID', color: { r: 0.1, g: 0.1, b: 0.1 } }];
+  container.appendChild(title);
+
+  // Spacer
+  const spacer = figma.createFrame();
+  spacer.resize(1, 16);
+  spacer.fills = [];
+  container.appendChild(spacer);
 
   const modeId = col.modes[0].modeId;
   const swatchesToBind = [];
 
-  // Sort groups alphabetically
-  const sortedGroups = Object.entries(groups).sort((a, b) => a[0].localeCompare(b[0]));
-
   for (const [groupName, vars] of sortedGroups) {
-    const row = figma.createFrame();
-    row.name = groupName;
-    row.layoutMode = 'HORIZONTAL';
-    row.primaryAxisSizingMode = 'AUTO';
-    row.counterAxisSizingMode = 'AUTO';
-    row.itemSpacing = ${gap};
-    row.fills = [];
-    container.appendChild(row);
+    // Row container with label
+    const rowContainer = figma.createFrame();
+    rowContainer.name = groupName;
+    rowContainer.layoutMode = 'HORIZONTAL';
+    rowContainer.primaryAxisSizingMode = 'AUTO';
+    rowContainer.counterAxisSizingMode = 'AUTO';
+    rowContainer.itemSpacing = 16;
+    rowContainer.counterAxisAlignItems = 'CENTER';
+    rowContainer.fills = [];
+    container.appendChild(rowContainer);
 
+    // Label
+    const label = figma.createText();
+    label.characters = groupName;
+    label.fontSize = 13;
+    label.fontName = { family: 'Inter', style: 'Medium' };
+    label.fills = [{ type: 'SOLID', color: { r: 0.4, g: 0.4, b: 0.4 } }];
+    label.resize(80, label.height);
+    label.textAlignHorizontal = 'RIGHT';
+    rowContainer.appendChild(label);
+
+    // Swatches row
+    const swatchRow = figma.createFrame();
+    swatchRow.layoutMode = 'HORIZONTAL';
+    swatchRow.primaryAxisSizingMode = 'AUTO';
+    swatchRow.counterAxisSizingMode = 'AUTO';
+    swatchRow.itemSpacing = 0;
+    swatchRow.fills = [];
+    swatchRow.cornerRadius = 6;
+    swatchRow.clipsContent = true;
+    rowContainer.appendChild(swatchRow);
+
+    // Sort shades
     vars.sort((a, b) => {
       const aNum = parseInt(a.name.split('/').pop()) || 0;
       const bNum = parseInt(b.name.split('/').pop()) || 0;
@@ -1157,38 +1223,32 @@ for (const col of targetCols) {
 
     for (const v of vars) {
       const swatch = figma.createFrame();
-      swatch.name = v.name.split('/').pop();
-      swatch.resize(${size}, ${size});
-      swatch.cornerRadius = 4;
+      swatch.name = v.name;
+      swatch.resize(48, 32);
       swatch.fills = [{ type: 'SOLID', color: { r: 0.9, g: 0.9, b: 0.9 } }];
-      row.appendChild(swatch);
+      swatchRow.appendChild(swatch);
       swatchesToBind.push({ swatch, variable: v, modeId });
       totalSwatches++;
     }
   }
 
-  // Bind variables after appending (prevents race condition)
+  // Bind after appending
   for (const { swatch, variable, modeId } of swatchesToBind) {
     try {
       let value = variable.valuesByMode[modeId];
-      // Resolve alias to get actual color
       if (value && value.type === 'VARIABLE_ALIAS') {
         const resolved = figma.variables.getVariableById(value.id);
-        if (resolved) {
-          const resolvedModeId = Object.keys(resolved.valuesByMode)[0];
-          value = resolved.valuesByMode[resolvedModeId];
-        }
+        if (resolved) value = resolved.valuesByMode[Object.keys(resolved.valuesByMode)[0]];
       }
       if (value && value.r !== undefined) {
-        const color = { r: value.r, g: value.g, b: value.b };
         swatch.fills = [figma.variables.setBoundVariableForPaint(
-          { type: 'SOLID', color }, 'color', variable
+          { type: 'SOLID', color: { r: value.r, g: value.g, b: value.b } }, 'color', variable
         )];
       }
     } catch (e) {}
   }
 
-  startX += container.width + 40;
+  startX += container.width + 60;
 }
 
 figma.viewport.scrollAndZoomIntoView(figma.currentPage.children.slice(-targetCols.length));
@@ -1197,9 +1257,9 @@ return 'Created ' + totalSwatches + ' color swatches';
 
     try {
       const result = await fastEval(code);
-      spinner.succeed(result || 'Created color swatches');
+      spinner.succeed(result || 'Created color palette');
     } catch (error) {
-      spinner.fail('Failed to create swatches');
+      spinner.fail('Failed to create palette');
       console.error(chalk.red(error.message));
     }
   });
