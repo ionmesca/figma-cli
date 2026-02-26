@@ -41,16 +41,14 @@ Other tools require MCP servers, API keys, or complex setup. This one doesn't.
 
 | | figma-ds-cli | MCP-based tools |
 |---|---|---|
-| **Setup** | Clone, "Initiate project", done | Configure MCP server + client |
 | **API Key** | Not needed | Personal Access Token or OAuth |
 | **Figma API Access** | **Entire Plugin API** via `eval` | Limited to predefined tools |
 | **Add Features** | Update `CLAUDE.md` | Fork repo, rebuild MCP server |
 | **AI Knowledge** | `CLAUDE.md` included | Teach AI manually |
-| **Designer-friendly** | Yes | Requires technical setup |
 
 ### Unlimited Extensibility
 
-MCP tools give you a fixed set of features. This CLI gives you the **entire Figma Plugin API**.
+This CLI gives you the **entire Figma Plugin API**.
 
 Want a feature that doesn't exist? Just ask Claude. He generates the code:
 
