@@ -1172,8 +1172,10 @@ for (const col of targetCols) {
     const value = variable.valuesByMode[modeId];
     if (value && value.type !== 'VARIABLE_ALIAS') {
       try {
+        // Strip alpha - setBoundVariableForPaint needs only {r,g,b}
+        const color = { r: value.r, g: value.g, b: value.b };
         swatch.fills = [figma.variables.setBoundVariableForPaint(
-          { type: 'SOLID', color: value }, 'color', variable
+          { type: 'SOLID', color }, 'color', variable
         )];
       } catch (e) {}
     }
