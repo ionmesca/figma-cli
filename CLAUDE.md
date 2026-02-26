@@ -136,37 +136,49 @@ Claude runs ALL commands automatically. User never types terminal commands.
 npm install
 ```
 
-### Step 2: Explain BEFORE running connect
+### Step 2: Ask connection mode
 
-**IMPORTANT: Tell the user what to do BEFORE running the connect command:**
+**Use AskUserQuestion tool:**
 
-Say this FIRST:
+Question: "How should I connect to Figma?"
+
+Options:
+1. **Safe Mode (Recommended)** - You'll start a small plugin in Figma
+2. **Yolo Mode** - Fully automatic, but needs system permissions
+
+### Step 3a: If Safe Mode (recommended)
+
+**FIRST explain what to do:**
 ```
-I'll start the connection. While it's waiting, please do these steps in Figma:
+I'll start the connection. While it's running, do these steps in Figma:
 
 1. Open Figma Desktop
 2. Go to: Plugins → Development → Import plugin from manifest
 3. Find the figma-cli folder, open "plugin", select "manifest.json"
-4. Then: Plugins → Development → FigCli
+4. Then run: Plugins → Development → FigCli
 
-Let me know when you see "Plugin connected" in the terminal!
+Tell me when you see "Plugin connected" in the terminal!
 ```
 
-### Step 3: THEN run connect (Claude runs this)
+**THEN run:**
 ```bash
 node src/index.js connect --safe
 ```
 
-### Step 4: When connected
-
-When terminal shows "Plugin connected!", say:
+**When connected, say:**
 ```
-Connected!
-
-Next time just click: Plugins → Development → FigCli
+Connected! Next time just: Plugins → Development → FigCli
 
 What would you like to create?
 ```
+
+### Step 3b: If Yolo Mode
+
+```bash
+node src/index.js connect
+```
+
+If permission error, explain Full Disk Access or suggest switching to Safe Mode.
 
 ---
 
