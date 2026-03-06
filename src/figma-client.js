@@ -416,7 +416,7 @@ export class FigmaClient {
             return `
           const el${idx} = figma.createText();
           el${idx}.fontName = {family:'Inter',style:'${style}'};
-          el${idx}.characters = ${JSON.stringify(item._content || '')};
+          el${idx}.characters = ${JSON.stringify(item.content || '')};
           el${idx}.fontSize = ${size};
           ${textFillCode.code}
           el${idx}.textAlignHorizontal = '${textAlignVal}';
@@ -424,40 +424,45 @@ export class FigmaClient {
           ${fillWidth ? `el${idx}.layoutSizingHorizontal = 'FILL';` : ''}`;
           } else if (item._type === 'frame') {
             const fName = item.name || 'Frame';
-            const fWidth = item.w || item.width || 100;
-            const fHeight = item.h || item.height || 100;
-            const fBg = item.bg || item.fill || '#ffffff';
+            const fillW = item.w === 'fill';
+            const fillH = item.h === 'fill';
+            const hasExplicitW = (item.w !== undefined || item.width !== undefined) && !fillW;
+            const hasExplicitH = (item.h !== undefined || item.height !== undefined) && !fillH;
+            const fWidth = hasExplicitW ? (item.w || item.width) : 100;
+            const fHeight = hasExplicitH ? (item.h || item.height) : 40;
+            // Frames without explicit bg should be transparent (not white)
+            const fBg = item.bg || item.fill || null;
             const fStroke = item.stroke || null;
             const fRounded = item.rounded || item.radius || 0;
-            const fFlex = item.flex || null;
+            const fFlex = item.flex || 'row';  // Default to row (always auto-layout like single render)
             const fGap = item.gap || 0;
             const fP = item.p !== undefined ? item.p : 0;
             const fPx = item.px !== undefined ? item.px : fP;
             const fPy = item.py !== undefined ? item.py : fP;
-            const fillW = item.w === 'fill';
-            const fillH = item.h === 'fill';
             const fGrow = item.grow || 0;
-            const fJustify = item.justify || 'start';
-            const fItems = item.items || 'start';
+            const fJustify = item.justify || 'center';
+            const fItems = item.items || 'center';
             const justifyMap = { start: 'MIN', center: 'CENTER', end: 'MAX', between: 'SPACE_BETWEEN' };
-            const fJustifyVal = justifyMap[fJustify] || 'MIN';
-            const fItemsVal = alignMap[fItems] || 'MIN';
-            const fFillCode = this.generateFillCode(fBg, `el${idx}`);
+            const fJustifyVal = justifyMap[fJustify] || 'CENTER';
+            const fItemsVal = alignMap[fItems] || 'CENTER';
+            const fFillCode = fBg ? this.generateFillCode(fBg, `el${idx}`) : { code: `el${idx}.fills = [];`, usesVars: false };
             const fStrokeCode = fStroke ? this.generateStrokeCode(fStroke, `el${idx}`) : { code: '' };
             const nestedChildren = item._children ? generateChildCode(item._children, `el${idx}`) : '';
             return `
           const el${idx} = figma.createFrame();
           el${idx}.name = ${JSON.stringify(fName)};
-          ${!fillW ? `el${idx}.resize(${fWidth}, ${fHeight});` : ''}
+          el${idx}.layoutMode = '${fFlex === 'row' ? 'HORIZONTAL' : 'VERTICAL'}';
+          el${idx}.primaryAxisSizingMode = '${hasExplicitW ? 'FIXED' : 'AUTO'}';
+          el${idx}.counterAxisSizingMode = '${hasExplicitH ? 'FIXED' : 'AUTO'}';
+          ${hasExplicitW || hasExplicitH ? `el${idx}.resize(${fWidth}, ${fHeight});` : ''}
           el${idx}.cornerRadius = ${fRounded};
           ${fFillCode.code}
           ${fStrokeCode.code}
-          ${fFlex ? `el${idx}.layoutMode = '${fFlex === 'row' ? 'HORIZONTAL' : 'VERTICAL'}';` : ''}
-          ${fFlex ? `el${idx}.itemSpacing = ${fGap};` : ''}
-          ${fFlex ? `el${idx}.paddingTop = el${idx}.paddingBottom = ${fPy};` : ''}
-          ${fFlex ? `el${idx}.paddingLeft = el${idx}.paddingRight = ${fPx};` : ''}
-          ${fFlex ? `el${idx}.primaryAxisAlignItems = '${fJustifyVal}';` : ''}
-          ${fFlex ? `el${idx}.counterAxisAlignItems = '${fItemsVal}';` : ''}
+          el${idx}.itemSpacing = ${fGap};
+          el${idx}.paddingTop = el${idx}.paddingBottom = ${fPy};
+          el${idx}.paddingLeft = el${idx}.paddingRight = ${fPx};
+          el${idx}.primaryAxisAlignItems = '${fJustifyVal}';
+          el${idx}.counterAxisAlignItems = '${fItemsVal}';
           ${parentVar}.appendChild(el${idx});
           ${fillW ? `el${idx}.layoutSizingHorizontal = 'FILL';` : ''}
           ${fillH ? `el${idx}.layoutSizingVertical = 'FILL';` : ''}
@@ -749,8 +754,13 @@ export class FigmaClient {
 
   generateCode(props, children) {
     const name = props.name || 'Frame';
-    const width = props.w || props.width || 320;
-    const height = props.h || props.height || 200;
+    const rawWidth = props.w || props.width;
+    const rawHeight = props.h || props.height;
+    // Support w="fill" / h="fill" for root frame
+    const fillWidth = rawWidth === 'fill';
+    const fillHeight = rawHeight === 'fill';
+    const width = fillWidth ? 100 : (rawWidth || 320);
+    const height = fillHeight ? 100 : (rawHeight || 200);
     const bg = props.bg || props.fill || '#ffffff';
     const stroke = props.stroke || null;
     const rounded = props.rounded || props.radius || 0;
@@ -857,15 +867,15 @@ export class FigmaClient {
           const fAbsoluteX = item.x !== undefined ? Number(item.x) : 0;
           const fAbsoluteY = item.y !== undefined ? Number(item.y) : 0;
 
-          // HUG by default, FIXED only if explicit size given
-          const hasWidth = item.w !== undefined || item.width !== undefined;
-          const hasHeight = item.h !== undefined || item.height !== undefined;
-          const fWidth = item.w || item.width || 100;
-          const fHeight = item.h || item.height || 40;
-
-          // Support w="fill" for nested frames
+          // Support w="fill" for nested frames (check BEFORE setting fWidth/fHeight)
           const fillWidth = item.w === 'fill';
           const fillHeight = item.h === 'fill';
+
+          // HUG by default, FIXED only if explicit numeric size given
+          const hasWidth = (item.w !== undefined || item.width !== undefined) && !fillWidth;
+          const hasHeight = (item.h !== undefined || item.height !== undefined) && !fillHeight;
+          const fWidth = fillWidth ? 100 : (item.w || item.width || 100);
+          const fHeight = fillHeight ? 100 : (item.h || item.height || 40);
 
           // Map align/justify to Figma values
           const alignMap = { start: 'MIN', center: 'CENTER', end: 'MAX', stretch: 'STRETCH' };
@@ -1103,8 +1113,10 @@ export class FigmaClient {
         frame.paddingRight = ${px};
         frame.primaryAxisAlignItems = '${justifyVal}';
         frame.counterAxisAlignItems = '${alignVal}';
-        frame.primaryAxisSizingMode = '${hugWidth ? 'AUTO' : 'FIXED'}';
-        frame.counterAxisSizingMode = '${hugHeight ? 'AUTO' : 'FIXED'}';
+        frame.primaryAxisSizingMode = '${hugWidth || fillWidth ? 'AUTO' : 'FIXED'}';
+        frame.counterAxisSizingMode = '${hugHeight || fillHeight ? 'AUTO' : 'FIXED'}';
+        ${fillWidth ? `frame.layoutSizingHorizontal = 'FILL';` : ''}
+        ${fillHeight ? `frame.layoutSizingVertical = 'FILL';` : ''}
         ${wrap && flex === 'row' && wrapGap > 0 ? `frame.counterAxisSpacing = ${wrapGap};` : ''}
         frame.clipsContent = ${clip};
 

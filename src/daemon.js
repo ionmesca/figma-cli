@@ -16,10 +16,58 @@
 
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
-import { readFileSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
-import { FigmaClient } from './figma-client.js';
+import { readFileSync, statSync, writeFileSync, unlinkSync, readdirSync } from 'fs';
+import { join, dirname } from 'path';
+import { homedir, tmpdir } from 'os';
+import { fileURLToPath, pathToFileURL } from 'url';
+
+// Hot-reload FigmaClient: copy to temp file and import (Node.js ES modules don't support cache busting)
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const figmaClientPath = join(__dirname, 'figma-client.js');
+let FigmaClient = null;
+let lastModTime = 0;
+let lastTempFile = null;
+
+async function getFigmaClient() {
+  try {
+    const stat = statSync(figmaClientPath);
+    const modTime = stat.mtimeMs;
+
+    // Reload if file changed or never loaded
+    if (!FigmaClient || modTime > lastModTime) {
+      // Clean up old temp files in project directory (keeps node_modules accessible)
+      try {
+        const oldFiles = readdirSync(__dirname).filter(f => f.startsWith('.figma-client-') && f.endsWith('.mjs'));
+        for (const f of oldFiles) {
+          try { unlinkSync(join(__dirname, f)); } catch {}
+        }
+      } catch {}
+
+      // Copy to temp file in same directory (so imports resolve correctly)
+      const tempFile = join(__dirname, `.figma-client-${modTime}.mjs`);
+      const content = readFileSync(figmaClientPath, 'utf8');
+      writeFileSync(tempFile, content);
+      lastTempFile = tempFile;
+
+      // Import from temp file
+      const tempUrl = pathToFileURL(tempFile).href;
+      const module = await import(tempUrl);
+      FigmaClient = module.FigmaClient;
+
+      const wasReload = lastModTime > 0;
+      lastModTime = modTime;
+      if (wasReload) console.log('[daemon] Hot-reloaded figma-client.js');
+    }
+  } catch (e) {
+    console.error('[daemon] Hot-reload error:', e.message);
+    // Fallback: just import normally
+    if (!FigmaClient) {
+      const module = await import('./figma-client.js');
+      FigmaClient = module.FigmaClient;
+    }
+  }
+  return FigmaClient;
+}
 
 const PORT = parseInt(process.env.DAEMON_PORT) || 3456;
 const MODE = process.env.DAEMON_MODE || 'auto'; // 'auto', 'cdp', 'plugin'
@@ -143,7 +191,8 @@ async function getCdpClient() {
 
   isCdpConnecting = true;
   try {
-    cdpClient = new FigmaClient();
+    const ClientClass = await getFigmaClient();
+    cdpClient = new ClientClass();
     await cdpClient.connect();
     lastHealthCheck = Date.now();
     lastHealthResult = true;
@@ -351,21 +400,25 @@ async function handleRequest(req, res) {
             case 'eval':
               result = await execWithTimeout(() => executeEval(code));
               break;
-            case 'render':
+            case 'render': {
               // Parse JSX to code, then execute via unified eval (works with both CDP and Plugin)
-              const parser = new FigmaClient();
+              const ClientClass = await getFigmaClient();
+              const parser = new ClientClass();
               const renderCode = parser.parseJSX(jsx);
               result = await execWithTimeout(() => executeEval(renderCode));
               break;
-            case 'render-batch':
+            }
+            case 'render-batch': {
               // Single eval for ALL frames (10x faster than loop)
-              const batchParser = new FigmaClient();
+              const ClientClass = await getFigmaClient();
+              const batchParser = new ClientClass();
               const batchCode = batchParser.parseJSXBatch(jsxArray, {
                 gap: gap || 40,
                 vertical: vertical || false
               });
               result = await execWithTimeout(() => executeEval(batchCode), 60000); // 60s for batches
               break;
+            }
             default:
               throw new Error(`Unknown action: ${action}`);
           }

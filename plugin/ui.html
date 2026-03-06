@@ -81,33 +81,47 @@
             connected = true;
             ws = socket;
 
-            // Close other attempts
-            attempts.forEach(s => { if (s !== socket && s.readyState === WebSocket.CONNECTING) s.close(); });
+            // Close other attempts (silently, no handlers)
+            attempts.forEach(s => {
+              if (s !== socket) {
+                s.onclose = null;  // Prevent triggering reconnect
+                s.onerror = null;
+                try { s.close(); } catch {}
+              }
+            });
+
+            // NOW set handlers on winning socket only
+            ws.onmessage = handleMessage;
+            ws.onclose = handleClose;
+            ws.onerror = handleClose;
 
             setStatus('Connected', 'connected');
             parent.postMessage({ pluginMessage: { type: 'connected' } }, '*');
 
             // Send hello
-            ws.send(JSON.stringify({ type: 'hello', mode: 'plugin', version: '1.1.0' }));
+            ws.send(JSON.stringify({ type: 'hello', mode: 'plugin', version: '1.2.0' }));
 
             // Start keepalive (ping every 10s)
             startKeepalive();
           };
 
-          socket.onmessage = handleMessage;
-          socket.onclose = handleClose;
-          socket.onerror = () => {}; // Ignore errors during parallel scan
+          // During scan: ignore close/error (don't trigger reconnect)
+          socket.onclose = () => {};
+          socket.onerror = () => {};
         } catch (e) {}
       });
 
-      // If no connection after 3s, retry
+      // If no connection after 1.5s, retry (faster than 3s)
       setTimeout(() => {
         if (!connected) {
-          attempts.forEach(s => { try { s.close(); } catch {} });
+          attempts.forEach(s => {
+            s.onclose = null;
+            try { s.close(); } catch {}
+          });
           clearTimeout(reconnectTimer);
-          reconnectTimer = setTimeout(connectParallel, 500);
+          reconnectTimer = setTimeout(connectParallel, 300);
         }
-      }, 3000);
+      }, 1500);
     }
 
     function handleMessage(event) {
@@ -127,8 +141,14 @@
           }, '*');
         }
 
+        // Daemon pings us
         if (msg.action === 'ping') {
           ws.send(JSON.stringify({ type: 'pong', id: msg.id }));
+        }
+
+        // Daemon responds to our ping
+        if (msg.type === 'pong') {
+          lastPong = Date.now();
         }
       } catch (e) {
         console.error('Message parse error:', e);
@@ -136,22 +156,35 @@
     }
 
     function handleClose() {
-      setStatus('Reconnecting...', 'connecting');
-      stopKeepalive();
-      parent.postMessage({ pluginMessage: { type: 'disconnected' } }, '*');
+      // Only show reconnecting if we were the active connection
+      if (ws && ws.readyState !== WebSocket.OPEN) {
+        ws = null;
+        setStatus('Reconnecting...', 'connecting');
+        stopKeepalive();
+        parent.postMessage({ pluginMessage: { type: 'disconnected' } }, '*');
 
-      // Fast reconnect (500ms instead of 2s)
-      clearTimeout(reconnectTimer);
-      reconnectTimer = setTimeout(connectParallel, 500);
+        // Fast reconnect (200ms)
+        clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(connectParallel, 200);
+      }
     }
+
+    let lastPong = Date.now();
 
     function startKeepalive() {
       stopKeepalive();
+      lastPong = Date.now();
       keepaliveTimer = setInterval(() => {
         if (ws && ws.readyState === WebSocket.OPEN) {
+          // Check if we got a pong recently (within 15s)
+          if (Date.now() - lastPong > 15000) {
+            console.log('No pong received, reconnecting...');
+            ws.close();
+            return;
+          }
           ws.send(JSON.stringify({ type: 'ping' }));
         }
-      }, 10000);
+      }, 5000);  // Ping every 5s instead of 10s
     }
 
     function stopKeepalive() {

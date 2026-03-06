@@ -2,3 +2,4 @@
 *.log
 DEV-NOTES.md
 node_modules/
+.figma-client-*.mjs
