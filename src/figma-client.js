@@ -354,10 +354,10 @@ export class FigmaClient {
     const varLoadCode = anyUsesVars ? `
       if (!globalThis.__varsCache || Date.now() - (globalThis.__varsCacheTime || 0) > 30000) {
         const collections = await figma.variables.getLocalVariableCollectionsAsync();
-        const shadcnCol = collections.find(c => c.name === 'shadcn');
         globalThis.__varsCache = {};
-        if (shadcnCol) {
-          for (const id of shadcnCol.variableIds) {
+        for (const col of collections) {
+          if (!col.name.startsWith('shadcn')) continue;
+          for (const id of col.variableIds) {
             const v = await figma.variables.getVariableByIdAsync(id);
             if (v) globalThis.__varsCache[v.name] = v;
           }
@@ -373,7 +373,9 @@ export class FigmaClient {
     // Generate code for each frame
     const framesCodes = parsed.map(({ props, children }, frameIdx) => {
       const name = props.name || 'Frame';
+      const hasExplicitWidth = props.w !== undefined || props.width !== undefined;
       const width = props.w || props.width || 320;
+      const hasExplicitHeight = props.h !== undefined || props.height !== undefined;
       const height = props.h || props.height || 200;
       const bg = props.bg || props.fill || '#ffffff';
       const stroke = props.stroke || null;
@@ -492,8 +494,8 @@ export class FigmaClient {
         f${frameIdx}.paddingLeft = f${frameIdx}.paddingRight = ${px};
         f${frameIdx}.primaryAxisAlignItems = '${justifyVal}';
         f${frameIdx}.counterAxisAlignItems = '${alignVal}';
-        f${frameIdx}.primaryAxisSizingMode = '${hugWidth ? 'AUTO' : 'FIXED'}';
-        f${frameIdx}.counterAxisSizingMode = '${hugHeight ? 'AUTO' : 'FIXED'}';
+        f${frameIdx}.primaryAxisSizingMode = '${flex === 'col' ? (hugHeight || !hasExplicitHeight ? 'AUTO' : 'FIXED') : (hugWidth || !hasExplicitWidth ? 'AUTO' : 'FIXED')}';
+        f${frameIdx}.counterAxisSizingMode = '${flex === 'col' ? (hugWidth || !hasExplicitWidth ? 'AUTO' : 'FIXED') : (hugHeight || !hasExplicitHeight ? 'AUTO' : 'FIXED')}';
         ${wrap && flex === 'row' && wrapGap > 0 ? `f${frameIdx}.counterAxisSpacing = ${wrapGap};` : ''}
         f${frameIdx}.clipsContent = ${clip};
         ${childCode}
@@ -782,6 +784,8 @@ export class FigmaClient {
     const name = props.name || 'Frame';
     const rawWidth = props.w || props.width;
     const rawHeight = props.h || props.height;
+    const hasExplicitWidth = props.w !== undefined || props.width !== undefined;
+    const hasExplicitHeight = props.h !== undefined || props.height !== undefined;
     // Support w="fill" / h="fill" for root frame
     const fillWidth = rawWidth === 'fill';
     const fillHeight = rawHeight === 'fill';
@@ -1087,10 +1091,10 @@ export class FigmaClient {
         // Load shadcn variables (cached for 30s)
         if (!globalThis.__varsCache || Date.now() - (globalThis.__varsCacheTime || 0) > 30000) {
           const collections = await figma.variables.getLocalVariableCollectionsAsync();
-          const shadcnCol = collections.find(c => c.name === 'shadcn');
           globalThis.__varsCache = {};
-          if (shadcnCol) {
-            for (const id of shadcnCol.variableIds) {
+          for (const col of collections) {
+            if (!col.name.startsWith('shadcn')) continue;
+            for (const id of col.variableIds) {
               const v = await figma.variables.getVariableByIdAsync(id);
               if (v) globalThis.__varsCache[v.name] = v;
             }
@@ -1147,8 +1151,8 @@ export class FigmaClient {
         frame.paddingRight = ${px};
         frame.primaryAxisAlignItems = '${justifyVal}';
         frame.counterAxisAlignItems = '${alignVal}';
-        frame.primaryAxisSizingMode = '${hugWidth || fillWidth ? 'AUTO' : 'FIXED'}';
-        frame.counterAxisSizingMode = '${hugHeight || fillHeight ? 'AUTO' : 'FIXED'}';
+        frame.primaryAxisSizingMode = '${flex === 'col' ? (hugHeight || fillHeight || !hasExplicitHeight ? 'AUTO' : 'FIXED') : (hugWidth || fillWidth || !hasExplicitWidth ? 'AUTO' : 'FIXED')}';
+        frame.counterAxisSizingMode = '${flex === 'col' ? (hugWidth || fillWidth || !hasExplicitWidth ? 'AUTO' : 'FIXED') : (hugHeight || fillHeight || !hasExplicitHeight ? 'AUTO' : 'FIXED')}';
         ${fillWidth ? `frame.layoutSizingHorizontal = 'FILL';` : ''}
         ${fillHeight ? `frame.layoutSizingVertical = 'FILL';` : ''}
         ${wrap && flex === 'row' && wrapGap > 0 ? `frame.counterAxisSpacing = ${wrapGap};` : ''}
