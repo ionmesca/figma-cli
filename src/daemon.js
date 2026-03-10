@@ -417,7 +417,7 @@ async function handleRequest(req, res) {
               const ClientClass = await getFigmaClient();
               const parser = new ClientClass();
               const renderCode = await parser.parseJSX(jsx);
-              result = await execWithTimeout(() => executeEval(renderCode));
+              result = await execWithTimeout(() => executeEval(renderCode), 90000); // 90s for renders with icons
               break;
             }
             case 'render-batch': {

@@ -15,6 +15,13 @@ import { FigJamClient } from './figjam-client.js';
 import { FigmaClient } from './figma-client.js';
 import { isPatched, patchFigma, unpatchFigma, getFigmaCommand, getCdpPort, getFigmaBinaryPath } from './figma-patch.js';
 import { listComponents, getComponent, getAllComponents, VISUAL_COMPONENTS } from './shadcn.js';
+import { listBlocks, getBlock } from './blocks/index.js';
+
+// Fix zsh shell escaping: zsh escapes ! to \! even in single quotes
+function unescapeShell(str) {
+  if (!str) return str;
+  return str.replace(/\\!/g, '!');
+}
 
 // Daemon configuration
 const DAEMON_PORT = 3456;
@@ -4987,7 +4994,8 @@ program
   .option('-y <n>', 'Y position')
   .option('--no-smart-position', 'Disable auto-positioning')
   .option('--fast', 'Use fast daemon-based rendering (simple frames only)')
-  .action(async (jsx, options) => {
+  .action(async (rawJsx, options) => {
+    const jsx = unescapeShell(rawJsx);
     await checkConnection();
     try {
       // Calculate smart position if not specified
@@ -5454,7 +5462,7 @@ program
   .option('-f, --file <path>', 'Run code from file instead of argument')
   .action(async (code, options) => {
     checkConnection();
-    let jsCode = code;
+    let jsCode = code ? unescapeShell(code) : code;
 
     // If --file option provided, read code from file
     if (options.file) {
@@ -7413,6 +7421,83 @@ shadcn
       spinner.succeed(`Created ${created} shadcn/ui component(s)`);
     } else {
       spinner.warn(`Created ${created}, failed ${failed}`);
+    }
+  });
+
+// ============ BLOCKS ============
+
+const blocksCmd = program
+  .command('blocks')
+  .description('Pre-built UI blocks (dashboards, pages, etc.)');
+
+blocksCmd
+  .command('list')
+  .description('List available blocks')
+  .action(() => {
+    const blocks = listBlocks();
+    if (blocks.length === 0) {
+      console.log(chalk.yellow('No blocks available yet.'));
+      return;
+    }
+    console.log(chalk.bold('\nAvailable Blocks:\n'));
+    for (const b of blocks) {
+      console.log(`  ${chalk.cyan(b.id.padEnd(20))} ${b.description}`);
+    }
+    console.log(`\nUsage: ${chalk.green('node src/index.js blocks create <id>')}\n`);
+  });
+
+blocksCmd
+  .command('create <id>')
+  .description('Create a block in Figma')
+  .action(async (id) => {
+    await checkConnection();
+    const block = getBlock(id);
+    if (!block) {
+      console.log(chalk.red(`✗ Block "${id}" not found.`));
+      console.log(`Run ${chalk.cyan('blocks list')} to see available blocks.`);
+      return;
+    }
+
+    const spinner = ora(`Creating ${block.name}...`).start();
+
+    try {
+      // Context helpers for block scripts
+      const context = {
+        // Render JSX via the existing render pipeline
+        renderJsx: async (jsx) => {
+          // Calculate smart position
+          let posX = 0;
+          try {
+            const canvasInfo = await daemonExec('eval', {
+              code: 'var nodes = figma.currentPage.children; var maxX = 0; for (var i = 0; i < nodes.length; i++) { var right = nodes[i].x + nodes[i].width; if (right > maxX) maxX = right; } return maxX;'
+            });
+            if (typeof canvasInfo === 'number' && canvasInfo > 0) posX = canvasInfo + 100;
+          } catch (e) { /* use 0 */ }
+
+          const result = await daemonExec('render', { jsx, x: posX, y: 0 }, 120000);
+          return result;
+        },
+
+        // Eval code from a file path
+        evalFile: async (filePath) => {
+          const code = readFileSync(filePath, 'utf8');
+          return await daemonExec('eval', { code }, 120000);
+        },
+
+        // Write temp file and return path
+        writeTemp: (name, content) => {
+          const tmpDir = join(homedir(), '.figma-ds-cli', 'tmp');
+          if (!existsSync(tmpDir)) mkdirSync(tmpDir, { recursive: true });
+          const tmpPath = join(tmpDir, name);
+          writeFileSync(tmpPath, content);
+          return tmpPath;
+        }
+      };
+
+      const nodeId = await block.create(context);
+      spinner.succeed(`Created ${block.name} (${nodeId})`);
+    } catch (e) {
+      spinner.fail(`Failed to create ${block.name}: ${e.message}`);
     }
   });
 
