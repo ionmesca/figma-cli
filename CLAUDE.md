@@ -138,7 +138,7 @@ node src/index.js eval '
 
 **Icon naming:** SVG filenames are kebab-case (e.g., `arrow-right.svg`, `chart-line.svg`). The codebase imports use camelCase with `fa` prefix (e.g., `faArrowRight`, `faChartLine`). To convert: strip `fa`, kebab-case the rest.
 
-**368 icons are actively used** in the codebase, imported as 16x16 components on the "Icons" page. Default fill: `color/slate/500` (variable-bound). Use `svgs-full` (square-optimized) — never `svgs` (varying aspect ratios distort on resize).
+**368 icons are actively used** in the codebase, imported as 16x16 components on the "Icons" page. Default fill: `color/slate/500` (variable-bound). **Always use these existing components** — never create new icon components. Find them: `iconsPage.findOne(n => n.type === "COMPONENT" && n.name === "icon/chevron-down")`. Use `svgs-full` (square-optimized) only when importing NEW icons not yet on the Icons page.
 
 **Families:** sharp-solid (primary, used for most UI), sharp-regular (outlined variant, used for secondary emphasis).
 
@@ -164,6 +164,40 @@ iconInst.swapComponent(targetComp);
 ```
 
 **Batch import script:** `bash scripts/batch-import-icons.sh /tmp/used-icons.txt 10` — imports icons from filter file into the current Figma page.
+
+## Component Building Rules
+
+When creating or modifying Figma components for Ledgy:
+
+### Naming
+- Component names MUST match `@ledgy/library-ui` exports: `Select` not "TextField with chevron"
+- Layer names must be semantic: `LabelRow`, `InputRow`, `ErrorMessage` — never `Frame 47`
+
+### Icon Slots (triple pattern)
+Every optional icon needs all three:
+1. Boolean toggle: `Show LeadingIcon` (BOOLEAN, default false)
+2. Instance swap: `LeadingIcon` (INSTANCE_SWAP, default to icon from Icons page)
+3. Correct color: vector fills bound to the component's text color variable per variant
+
+### Structure
+- **clipContent on containers** — when composing AddOn + Input side-by-side, container gets `cornerRadius + clipsContent = true`, children get cornerRadius = 0. Solves dynamic rounding.
+- **Hug content** — set `primaryAxisSizingMode = "AUTO"` AFTER `resize()` (resize can override it). Components with optional content (description, error, panel) MUST hug — fixed height breaks show/hide toggles.
+- **strokesIncludedInLayout = true** — when a frame uses both stroke and padding (like CSS `border + padding`), set this so the stroke is part of the layout. Without it, stroke overlaps with padding and content sits too close to the edge.
+- **No spacer frames** — use `layoutGrow = 1` on the element that should fill space
+- **Form-level add-ons stay form-level** — NumberField has no built-in EUR prefix. The form wraps it.
+
+### Using Existing Components
+- Always use `icon/*` components from the Icons page. Never create duplicate icon components.
+- Always read DESIGN.md Section 4 registry before building — the component may already exist.
+- When composing screens, instantiate named field components (TextField, Select, DatePicker) not raw Input.
+- Verify against the code CVA before choosing colors/icons — Select uses `faChevronDown`, DatePicker uses `faAngleDown`.
+
+### Verification (after every component create/update)
+1. All fills/strokes use variable bindings (no hardcoded hex)
+2. All text nodes have text styles applied (Aeonik Pro, not Inter)
+3. Icons from Icons page, colored with correct variable
+4. Auto-layout frames hug content
+5. `verify` screenshot taken
 
 ## Recipes
 
@@ -212,9 +246,9 @@ Every `<Text>` that could be multi-word **must** have `w="fill"`, and its parent
 </Frame>
 ```
 
-### justify="between" Doesn't Work
+### justify="between" Doesn't Work in render
 
-Use a `grow={1}` spacer frame instead:
+In `render` JSX, use a `grow={1}` spacer:
 
 ```jsx
 <Frame flex="row" items="center">
@@ -222,6 +256,12 @@ Use a `grow={1}` spacer frame instead:
   <Frame grow={1} />
   <Text>Right</Text>
 </Frame>
+```
+
+In `eval`, use auto-layout alignment instead (no spacer needed):
+```javascript
+frame.primaryAxisAlignItems = "MAX";         // right-align children
+frame.primaryAxisAlignItems = "SPACE_BETWEEN"; // space between
 ```
 
 ### Content Overflow is Silent
@@ -272,9 +312,12 @@ const maxX = Math.max(0, ...figma.currentPage.children.map(n => n.x + n.width)) 
 - `var:` only searches shadcn collections — use `bind` instead.
 - `<Slot>` in JSX drops sibling elements — use `<Frame>` then `slot convert`.
 - `render` sets font to Inter — always apply a text style after rendering text.
-- `slot convert` reorders children — re-fix ordering with `insertChild` after.
+- `slot convert` reorders children — re-fix ordering with `insertChild` after. Also reparents slots to the component root instead of keeping them in the parent frame. Always `appendChild` slots back into their intended container after conversion.
 - eval variable names persist across daemon calls — use IIFEs or `daemon restart` to clear.
 - Icon color: target vector children inside instances, not the outer frame.
 - `render-batch` does NOT render text properly in Safe Mode.
 - Daemon has 60s timeout — `daemon restart` if commands fail.
 - Connection is file-specific — switching Figma files requires reconnecting.
+- `fetch("file://...")` does NOT work in eval — read SVG content on disk and pass inline instead.
+- `layoutSizingHorizontal = "FILL"` must be set AFTER appending node to an auto-layout parent. Setting it before throws an error.
+- Aeonik Pro has no "Semibold" font style — use "Bold". Available: Regular, Medium, Bold, Light, Thin, Black, Air. Always `loadFontAsync` before changing text characters in eval.
