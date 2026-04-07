@@ -11,65 +11,115 @@ node src/index.js connect --safe  # Safe mode (uses plugin, no patching)
 
 After connecting: `node src/index.js canvas info` to verify.
 
-## Ledgy Tokens
+**Connection is file-specific.** Switching files in Figma requires running `connect` again. If commands fail with "fetch failed", run `daemon restart` or `connect` again.
+
+## Variable Binding
+
+Use `bind` to attach Figma variables from ANY collection (including TailwindCSS):
 
 ```bash
-node src/index.js tokens preset ledgy    # Load Ledgy semantic tokens
+node src/index.js bind fill "color/primary/500"     # select a node first
+node src/index.js bind stroke "color/primary/600"
+node src/index.js bind list                          # show available variables
 ```
 
-This creates a semantic collection with Light mode, mapping to the existing TailwindCSS primitive variables in Figma. Run once per file.
+The Figma file has a TailwindCSS collection with 379 color variables. Use `bind` with the variable path (e.g., `color/primary/500`, `color/slate/200`, `color/white`).
 
-The Figma file already has a TailwindCSS collection with 379 primitive color variables. The Ledgy preset adds a semantic layer on top.
+**Do NOT use `var:` syntax** — it only searches shadcn collections and will silently fall back to #808080 if no shadcn collection exists.
 
 ## Creating Components
 
-Always use `render` with JSX syntax and `var:` bindings:
+Use `render` for frame creation (has smart positioning), then bind variables after:
 
 ```bash
-node src/index.js render '<Frame name="Button" flex="row" items="center" gap={4} px={8} py={0} h={36} rounded={6} bg="var:primary" stroke="var:primary-hover">
-  <Text color="var:primary-foreground" size={14} weight={500}>Label</Text>
-</Frame>'
-```
+# 1. Render the frame structure
+node src/index.js render '<Frame name="Button" flex="row" items="center" justify="center" gap={4} px={8} h={36} rounded={6}><Frame name="LeadingIcon" w={16} h={16} /><Text name="Label" size={14} weight={500}>Button</Text><Frame name="TrailingIcon" w={16} h={16} /></Frame>'
 
-After render, convert to component:
-```bash
+# 2. Select the rendered node and bind variables
+node src/index.js bind fill "color/primary/500"
+node src/index.js bind stroke "color/primary/600"
+
+# 3. Convert to component
 node src/index.js node to-component "NODE_ID"
+
+# 4. Convert icon frames to slots
+node src/index.js slot convert "LEADING_ICON_ID"
+node src/index.js slot convert "TRAILING_ICON_ID"
 ```
 
 ### Slots
 
-Create flexible content areas (not variants):
+Create slots by rendering plain `<Frame>` elements, then converting:
+
 ```bash
-node src/index.js slot create "SlotName" --flex row --gap 4
-node src/index.js slot preferred "SLOT_ID" "COMP_ID_1" "COMP_ID_2"
+node src/index.js slot convert "FRAME_ID"        # convert existing frame to slot
+node src/index.js slot preferred "SLOT_ID" "COMP_ID_1" "COMP_ID_2"  # set preferred instances
 ```
 
-Or inline in JSX:
-```jsx
-<Slot name="LeadingIcon" flex="row" w={16} h={16} />
+**Do NOT use `<Slot>` in JSX** — it doesn't render reliably (children after the first Slot may be dropped). Use `<Frame>` then `slot convert`.
+
+**Do NOT use `eval` with `isSlot = true`** — it doesn't create proper slots. Always use `slot convert`.
+
+## Text Styles
+
+The Figma file has text styles (text-xs through text-9xl with weight variants). Apply via eval:
+
+```bash
+node src/index.js eval '
+(async () => {
+  const styles = await figma.getLocalTextStylesAsync();
+  const style = styles.find(s => s.name === "text-sm/medium");
+  const node = figma.currentPage.selection[0];
+  const textNode = node.children?.find(c => c.type === "TEXT");
+  if (textNode && style) textNode.textStyleId = style.id;
+  return textNode?.textStyleId;
+})()
+'
 ```
 
-**Critical:** `isSlot = true` does NOT work via eval. Always use `slot convert` or JSX `<Slot>`.
+Available text styles: text-xs, text-sm, text-base, text-lg, text-xl, text-2xl through text-9xl. Each has weight variants: thin, extralight, light, normal, medium, semibold, bold, extrabold.
 
-### Variable Binding
+Format: `text-{size}/{weight}` (e.g., `text-sm/medium`, `text-lg/semibold`).
 
-Always use `var:name` syntax. Maps to the semantic collection created by `tokens preset ledgy`:
+## Effect Styles
 
-| var: name | Resolves to |
-|-----------|------------|
-| var:primary | primary-500 (#4920F5) |
-| var:primary-hover | primary-600 (#3313C6) |
-| var:primary-foreground | white |
-| var:foreground | slate-600 |
-| var:heading | slate-800 |
-| var:border | slate-200 |
-| var:border-hover | slate-300 |
-| var:disabled-bg | slate-100 |
-| var:danger | red-500 |
-| var:success | emerald-500 |
-| var:card | white |
-| var:surface | slate-50 |
-| var:ring | primary-200 |
+The Figma file has shadow effect styles. Apply via eval:
+
+```bash
+node src/index.js eval '
+(async () => {
+  const styles = await figma.getLocalEffectStylesAsync();
+  const shadow = styles.find(s => s.name === "shadow/sm");
+  const node = figma.currentPage.selection[0];
+  if (node && shadow) node.effectStyleId = shadow.id;
+  return node?.effectStyleId;
+})()
+'
+```
+
+Available: shadow/sm, shadow/base, shadow/md, shadow/lg, shadow/xl, shadow/2xl, shadow/inner.
+
+Primary/secondary/danger buttons use shadow/sm (maps to Tailwind shadow-xs).
+
+## Font
+
+The file has a font variable `type/fontFamilies/sans` = Aeonik Pro.
+
+**`render` uses the default font (Inter), not Aeonik Pro.** After rendering text, fix the font via eval:
+
+```bash
+node src/index.js eval '
+(async () => {
+  await figma.loadFontAsync({family: "Aeonik Pro", style: "Medium"});
+  const node = figma.currentPage.selection[0];
+  const text = node.type === "TEXT" ? node : node.children?.find(c => c.type === "TEXT");
+  if (text) text.fontName = {family: "Aeonik Pro", style: "Medium"};
+  return text?.fontName;
+})()
+'
+```
+
+Styles: Regular (400), Medium (500), SemiBold (600), Bold (700). Or use text styles which include the font.
 
 ## Recipes
 
@@ -77,11 +127,9 @@ Always use `var:name` syntax. Maps to the semantic collection created by `tokens
 node src/index.js recipes create button   # Create Ledgy button component
 ```
 
-Recipes produce slot-based components with variables bound. See `src/recipes/` for available recipes.
+Recipes produce slot-based components. See `src/recipes/` for available recipes.
 
 ## Verification
-
-After creating anything visual, always verify:
 
 ```bash
 node src/index.js verify               # Screenshot of selection
@@ -90,16 +138,21 @@ node src/index.js verify "NODE_ID"     # Screenshot of specific node
 
 ## Key Rules
 
-1. **Always use `render` for creating frames** — it has smart positioning.
-2. **Never use `eval` to create visual elements** — no positioning, overlaps at (0,0).
-3. **Always bind colors with `var:`** — no hardcoded hex values.
-4. **Convert to component with `node to-component`** after render.
-5. **Use `slot convert`** for slots, never `eval` with `isSlot = true`.
-6. **Verify after every creation** with the `verify` command.
-7. **Font is Aeonik Pro** — set `weight={500}` for medium, `weight={600}` for semibold.
+1. **Use `render` for frames** — has smart positioning.
+2. **Use `bind` for variables** — works with all collections. Never use `var:`.
+3. **Use `<Frame>` + `slot convert` for slots** — not JSX `<Slot>`.
+4. **Use text styles when possible** — `text-sm/medium` includes Aeonik Pro + correct sizing.
+5. **Use effect styles for shadows** — `shadow/sm` not hardcoded values.
+6. **Set font to Aeonik Pro** — render defaults to Inter.
+7. **Convert to component** with `node to-component` after render.
+8. **Verify after every creation.**
+9. **Reconnect after switching files** — `connect` or `daemon restart`.
 
 ## Gotchas
 
-- `render-batch` does NOT render text properly in Safe Mode. Use individual `render` commands.
-- The daemon has a 60s timeout. For long operations, check `daemon status` and `daemon restart`.
-- Variable names are case-sensitive and must match the semantic collection exactly.
+- `var:` only searches shadcn collections — use `bind` instead.
+- `<Slot>` in JSX drops sibling elements — use `<Frame>` then `slot convert`.
+- `render` sets font to Inter, not Aeonik Pro — fix via eval or text styles.
+- `render-batch` does NOT render text properly in Safe Mode.
+- Daemon has 60s timeout — `daemon restart` if commands fail.
+- Connection is file-specific — switching Figma files requires reconnecting.
