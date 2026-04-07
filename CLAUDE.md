@@ -142,9 +142,13 @@ node src/index.js eval '
 
 **Icon naming:** SVG filenames are kebab-case (e.g., `arrow-right.svg`, `chart-line.svg`). The codebase imports use camelCase with `fa` prefix (e.g., `faArrowRight`, `faChartLine`). To convert: strip `fa`, kebab-case the rest.
 
-**368 icons are actively used** in the codebase. The full SVG library is available for future needs.
+**368 icons are actively used** in the codebase, imported as 16x16 components on the "Icons" page. Default fill: `color/slate/500` (variable-bound). Use `svgs-full` (square-optimized) — never `svgs` (varying aspect ratios distort on resize).
 
 **Families:** sharp-solid (primary, used for most UI), sharp-regular (outlined variant, used for secondary emphasis).
+
+**Icon color overrides:** When placing icons in slots (e.g., button), override the fill on the vector children inside the icon instance — the SVG imports as a frame containing vector nodes. Setting fill on the outer frame doesn't change the visible icon.
+
+**Batch import script:** `bash scripts/batch-import-icons.sh /tmp/used-icons.txt 10` — imports icons from filter file into the current Figma page.
 
 ## Recipes
 
