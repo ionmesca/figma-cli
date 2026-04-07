@@ -60,6 +60,8 @@ node src/index.js slot preferred "SLOT_ID" "COMP_ID_1" "COMP_ID_2"  # set prefer
 
 **Do NOT use `eval` with `isSlot = true`** — it doesn't create proper slots. Always use `slot convert`.
 
+**`slot convert` reorders children.** After converting frames to slots, re-fix the order with `parent.insertChild(index, node)`. Always verify child ordering after slot operations.
+
 ## Text Styles
 
 The Figma file has text styles (text-xs through text-9xl with weight variants). Apply via eval:
@@ -103,27 +105,21 @@ Primary/secondary/danger buttons use shadow/sm (maps to Tailwind shadow-xs).
 
 ## Font
 
-The file has a font variable `type/fontFamilies/sans` = Aeonik Pro.
+**Always use text styles** instead of manual font loading. Text styles set the correct font (Aeonik Pro), size, and weight in one call:
 
-**`render` uses the default font (Inter), not Aeonik Pro.** After rendering text, fix the font via eval:
-
-```bash
-node src/index.js eval '
-(async () => {
-  await figma.loadFontAsync({family: "Aeonik Pro", style: "Medium"});
-  const node = figma.currentPage.selection[0];
-  const text = node.type === "TEXT" ? node : node.children?.find(c => c.type === "TEXT");
-  if (text) text.fontName = {family: "Aeonik Pro", style: "Medium"};
-  return text?.fontName;
-})()
-'
+```javascript
+var textStyles = await figma.getLocalTextStylesAsync();
+var style = textStyles.find(s => s.name === "text-sm/medium");
+textNode.textStyleId = style.id;
 ```
 
-Styles: Regular (400), Medium (500), SemiBold (600), Bold (700). Or use text styles which include the font.
+`render` creates text in Inter. Applying a text style immediately after fixes both font and size. Never use `figma.loadFontAsync` + manual `fontName` — use text styles.
+
+Available Aeonik Pro styles: Regular, Medium, Bold (and others). Text style format: `text-{size}/{weight}` — e.g., `text-sm/medium`, `text-lg/semibold`, `text-xl/bold`.
 
 ## Icons
 
-Font Awesome Sharp SVGs are in `icons/sharp-solid/` and `icons/sharp-regular/` (4,791 each). These are the exact icons used in the Ledgy codebase.
+Font Awesome Sharp SVGs are in `icons/` (square-optimized from `svgs-full`). These are the exact icons used in the Ledgy codebase.
 
 Place an icon via eval:
 
@@ -146,7 +142,26 @@ node src/index.js eval '
 
 **Families:** sharp-solid (primary, used for most UI), sharp-regular (outlined variant, used for secondary emphasis).
 
-**Icon color overrides:** When placing icons in slots (e.g., button), override the fill on the vector children inside the icon instance — the SVG imports as a frame containing vector nodes. Setting fill on the outer frame doesn't change the visible icon.
+**Icon color overrides:** Override fill on the VECTOR CHILDREN inside the icon instance, not the outer frame. Setting fill on the outer frame creates a colored square over the icon. Pattern:
+```javascript
+function setVecColor(node, varName) {
+  for (var i = 0; i < (node.children || []).length; i++) {
+    var ch = node.children[i];
+    if (ch.fills && ch.fills.length > 0 && ch.type !== "FRAME" && ch.type !== "INSTANCE") {
+      ch.fills = [bp(varName)]; // bp = setBoundVariableForPaint helper
+    }
+    if (ch.children) setVecColor(ch, varName);
+  }
+}
+```
+
+**Swapping icons in instances:** When using a Button instance and need a different icon in a slot:
+```javascript
+var slot = btnInstance.children.find(c => c.name === "LeadingIcon");
+var iconInst = slot.children.find(c => c.type === "INSTANCE");
+var targetComp = figma.getNodeById("ICON_COMPONENT_ID");
+iconInst.swapComponent(targetComp);
+```
 
 **Batch import script:** `bash scripts/batch-import-icons.sh /tmp/used-icons.txt 10` — imports icons from filter file into the current Figma page.
 
@@ -256,7 +271,10 @@ const maxX = Math.max(0, ...figma.currentPage.children.map(n => n.x + n.width)) 
 
 - `var:` only searches shadcn collections — use `bind` instead.
 - `<Slot>` in JSX drops sibling elements — use `<Frame>` then `slot convert`.
-- `render` sets font to Inter, not Aeonik Pro — fix via eval or text styles.
+- `render` sets font to Inter — always apply a text style after rendering text.
+- `slot convert` reorders children — re-fix ordering with `insertChild` after.
+- eval variable names persist across daemon calls — use IIFEs or `daemon restart` to clear.
+- Icon color: target vector children inside instances, not the outer frame.
 - `render-batch` does NOT render text properly in Safe Mode.
 - Daemon has 60s timeout — `daemon restart` if commands fail.
 - Connection is file-specific — switching Figma files requires reconnecting.
