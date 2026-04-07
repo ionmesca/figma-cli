@@ -136,6 +136,81 @@ node src/index.js verify               # Screenshot of selection
 node src/index.js verify "NODE_ID"     # Screenshot of specific node
 ```
 
+## JSX Pitfalls
+
+### Silent Prop Mistakes
+
+Wrong prop names fail silently — no error, just broken output:
+
+| WRONG | RIGHT |
+|-------|-------|
+| `fill="#fff"` | `bg="#fff"` |
+| `padding={24}` | `p={24}` |
+| `cornerRadius={12}` | `rounded={12}` |
+| `fontSize={18}` | `size={18}` |
+| `fontWeight="bold"` | `weight="bold"` |
+| `layout="horizontal"` | `flex="row"` |
+| `justify="between"` | use `grow={1}` spacer |
+
+### Text Gets Cut Off
+
+Every `<Text>` that could be multi-word **must** have `w="fill"`, and its parent must have `w="fill"` or a fixed width.
+
+```jsx
+// BAD — text clips
+<Frame flex="col" gap={8}>
+  <Text size={14}>Long label text here</Text>
+</Frame>
+
+// GOOD — text wraps
+<Frame flex="col" gap={8} w="fill">
+  <Text size={14} w="fill">Long label text here</Text>
+</Frame>
+```
+
+### justify="between" Doesn't Work
+
+Use a `grow={1}` spacer frame instead:
+
+```jsx
+<Frame flex="row" items="center">
+  <Text>Left</Text>
+  <Frame grow={1} />
+  <Text>Right</Text>
+</Frame>
+```
+
+### Content Overflow is Silent
+
+Fixed height too small for children + padding silently clips. Always verify: `childHeight + paddingTop + paddingBottom <= parentHeight`.
+
+### Full-Page Layouts
+
+One root frame with `flex="col"` and fixed width. Each section as a child with `w="fill"`:
+
+```jsx
+<Frame name="Page" w={1440} flex="col">
+  <Frame name="Header" w="fill" h={64} />
+  <Frame name="Content" w="fill" grow={1} />
+</Frame>
+```
+
+### eval Positioning
+
+`render` has smart positioning. `eval` does not — elements land at (0,0). When using eval, find the rightmost edge first:
+
+```javascript
+const maxX = Math.max(0, ...figma.currentPage.children.map(n => n.x + n.width)) + 100;
+```
+
+### Other Rules
+
+- Absolute positioned elements must have a `name` prop or x/y is ignored.
+- Never delete existing nodes on the canvas — users' work must be preserved.
+- Load fonts with `figma.loadFontAsync()` BEFORE creating any text in eval.
+- Keep each render/eval call focused — split complex layouts to avoid 60s timeout.
+- Use `render-batch` with `-d row|col` and `-g <gap>` for multiple frames at once.
+
 ## Key Rules
 
 1. **Use `render` for frames** — has smart positioning.
