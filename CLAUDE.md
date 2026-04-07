@@ -121,6 +121,31 @@ node src/index.js eval '
 
 Styles: Regular (400), Medium (500), SemiBold (600), Bold (700). Or use text styles which include the font.
 
+## Icons
+
+Font Awesome Sharp SVGs are in `icons/sharp-solid/` and `icons/sharp-regular/` (4,791 each). These are the exact icons used in the Ledgy codebase.
+
+Place an icon via eval:
+
+```bash
+node src/index.js eval '
+(async () => {
+  const resp = await fetch("file:///PATH_TO_REPO/icons/sharp-solid/user.svg");
+  const svg = await resp.text();
+  const icon = figma.createNodeFromSvg(svg);
+  icon.resize(16, 16);
+  icon.name = "icon-user";
+  return icon.id;
+})()
+'
+```
+
+**Icon naming:** SVG filenames are kebab-case (e.g., `arrow-right.svg`, `chart-line.svg`). The codebase imports use camelCase with `fa` prefix (e.g., `faArrowRight`, `faChartLine`). To convert: strip `fa`, kebab-case the rest.
+
+**368 icons are actively used** in the codebase. The full SVG library is available for future needs.
+
+**Families:** sharp-solid (primary, used for most UI), sharp-regular (outlined variant, used for secondary emphasis).
+
 ## Recipes
 
 ```bash
