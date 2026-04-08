@@ -173,11 +173,26 @@ When creating or modifying Figma components for Ledgy:
 - Component names MUST match `@ledgy/library-ui` exports: `Select` not "TextField with chevron"
 - Layer names must be semantic: `LabelRow`, `InputRow`, `ErrorMessage` — never `Frame 47`
 
-### Icon Slots (triple pattern)
-Every optional icon needs all three:
+### Icon Properties (INSTANCE_SWAP — preferred)
+
+For icons in component sets with variants, use INSTANCE_SWAP properties. This lets users swap icons from the properties panel without detaching instances:
+
+```javascript
+// Add INSTANCE_SWAP property at component set level
+compSet.addComponentProperty("Icon", "INSTANCE_SWAP", defaultIconComp.id);
+// Link each variant's icon instance to the property
+var propKey = Object.keys(compSet.componentPropertyDefinitions).find(function(k) {
+  return compSet.componentPropertyDefinitions[k].type === "INSTANCE_SWAP";
+});
+iconInstance.componentPropertyReferences = { mainComponent: propKey };
+```
+
+For components with optional leading/trailing icons, use the triple pattern:
 1. Boolean toggle: `Show LeadingIcon` (BOOLEAN, default false)
 2. Instance swap: `LeadingIcon` (INSTANCE_SWAP, default to icon from Icons page)
 3. Correct color: vector fills bound to the component's text color variable per variant
+
+**Never use native slots (`slot convert`) for icons** — slots are for content areas where users drag in arbitrary components (like NavGroup children or NavBar content). Icons need INSTANCE_SWAP for clean property-panel swapping.
 
 ### Structure
 - **clipContent on containers** — when composing AddOn + Input side-by-side, container gets `cornerRadius + clipsContent = true`, children get cornerRadius = 0. Solves dynamic rounding.
@@ -188,9 +203,11 @@ Every optional icon needs all three:
 
 ### Using Existing Components
 - Always use `icon/*` components from the Icons page. Never create duplicate icon components.
+- Always use Badge component (6325:681) for badges and counters — never create placeholder frames.
 - Always read DESIGN.md Section 4 registry before building — the component may already exist.
 - When composing screens, instantiate named field components (TextField, Select, DatePicker) not raw Input.
 - Verify against the code CVA before choosing colors/icons — Select uses `faChevronDown`, DatePicker uses `faAngleDown`.
+- Button and Link are visually identical in Figma — use the existing Button component for both.
 
 ### Verification (after every component create/update)
 1. All fills/strokes use variable bindings (no hardcoded hex)
@@ -320,4 +337,7 @@ const maxX = Math.max(0, ...figma.currentPage.children.map(n => n.x + n.width)) 
 - Connection is file-specific — switching Figma files requires reconnecting.
 - `fetch("file://...")` does NOT work in eval — read SVG content on disk and pass inline instead.
 - `layoutSizingHorizontal = "FILL"` must be set AFTER appending node to an auto-layout parent. Setting it before throws an error.
+- Remote variable bindings: always use LOCAL TailwindCSS collection. Rebind remote vars with `setBoundVariableForPaint`: `var fills = JSON.parse(JSON.stringify(node.fills)); fills[0] = figma.variables.setBoundVariableForPaint(fills[0], "color", localVar); node.fills = fills;`
+- Re-apply local text styles to fix remote typography bindings — `textNode.textStyleId = localStyle.id` replaces all remote type vars at once.
+- Daemon times out on large evals (>30 lines). Break complex operations into small sequential evals. Use ES5 syntax (var, function()) — some eval contexts don't support arrow functions or const/let.
 - Aeonik Pro has no "Semibold" font style — use "Bold". Available: Regular, Medium, Bold, Light, Thin, Black, Air. Always `loadFontAsync` before changing text characters in eval.
