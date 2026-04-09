@@ -341,3 +341,44 @@ const maxX = Math.max(0, ...figma.currentPage.children.map(n => n.x + n.width)) 
 - Re-apply local text styles to fix remote typography bindings — `textNode.textStyleId = localStyle.id` replaces all remote type vars at once.
 - Daemon times out on large evals (>30 lines). Break complex operations into small sequential evals. Use ES5 syntax (var, function()) — some eval contexts don't support arrow functions or const/let.
 - Aeonik Pro has no "Semibold" font style — use "Bold". Available: Regular, Medium, Bold, Light, Thin, Black, Air. Always `loadFontAsync` before changing text characters in eval.
+- `layoutPositioning = "ABSOLUTE"` must be set AFTER appending node to an auto-layout parent. Setting before throws "parent node has layoutMode NONE" error.
+- Instance sublayers in slots cannot be removed or hidden via API (`set_visible`/`remove` throw "does not exist"). To replace slot content: rename existing default children's text, add extras via `createInstance()` + `slot.appendChild()`, hide excess with `.visible = false`.
+- `findOne()` on nodes containing instances with slots crashes when it traverses into broken sublayer IDs. Use direct child indexing (`parent.children[0]`) when you know the structure.
+- Multiple `await figma.loadFontAsync()` in loops cause timeouts. Preload ONCE at start via temp instance: `var tmp = comp.createInstance(); await figma.loadFontAsync(tmp.findOne(fn).fontName); tmp.remove();`
+
+## Batch Operations
+
+When creating multiple similar items (nav items, form fields, list rows), use the **items array pattern** — 5-10x faster than one eval per item:
+
+```javascript
+(async function() {
+  var def = figma.getNodeById("COMPONENT_ID");
+  // Preload font ONCE
+  var tmp = def.createInstance();
+  await figma.loadFontAsync(tmp.findOne(function(n){return n.type==="TEXT";}).fontName);
+  tmp.remove();
+
+  var items = [
+    {n:"Home", ic:"6320:2074"},
+    {n:"Settings", ic:"6320:1801", chevron:true, badge:true}
+  ];
+
+  for (var i = 0; i < items.length; i++) {
+    var it = def.createInstance();
+    it.name = items[i].n;
+    parent.appendChild(it);
+    it.layoutSizingHorizontal = "FILL";
+    it.findOne(function(n){return n.name==="Label"&&n.type==="TEXT";}).characters = items[i].n;
+    it.findOne(function(n){return n.name==="Icon"&&n.type==="INSTANCE";}).swapComponent(figma.getNodeById(items[i].ic));
+    if (items[i].chevron) it.findOne(function(n){return n.name==="Chevron";}).visible = true;
+    if (items[i].badge) it.findOne(function(n){return n.name==="Badge";}).visible = true;
+  }
+  return items.length + " items added";
+})()
+```
+
+Rules for fast evals:
+- **One eval per logical group** (5-10 similar items), not one eval per item.
+- **Direct child access** (`parent.children[0]`) over `findOne()` when structure is known.
+- **Preload fonts once**, never inside loops.
+- **Keep under ~40 lines** for simple operations (no nested async). Under 25 for complex ones.
