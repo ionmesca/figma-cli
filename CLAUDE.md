@@ -62,9 +62,13 @@ node src/index.js slot preferred "SLOT_ID" "COMP_ID_1" "COMP_ID_2"  # set prefer
 
 **`slot convert` reorders children.** After converting frames to slots, re-fix the order with `parent.insertChild(index, node)`. Always verify child ordering after slot operations.
 
-### Populating Slots in Instances
+### Working with Slots in Instances
 
-Use `slot populate` to add configured component instances to a slot:
+Slot defaults are usually the right components — update them or add more.
+
+**Updating defaults:** `swapComponent()` works on all slot children without breaking siblings. Use it for variant changes and icon swaps. `setProperties()` and `findOne()` only work once per slot — they break all sibling IDs after 1 call. Plan accordingly: do all `swapComponent` calls first.
+
+**Adding children:** Use `slot populate` to batch-add configured instances:
 
 ```bash
 node src/index.js slot populate "SLOT_NODE_ID" -c '[
@@ -75,7 +79,9 @@ node src/index.js slot populate "SLOT_NODE_ID" -c '[
 
 Each item: `componentId` (required), `properties` (optional setProperties object), `text` (optional — string for "Label", array of `[{name, value}]`, or object `{NodeName: "value"}`).
 
-Slot defaults remain — delete them in Figma's layers panel if unwanted (select → Delete). The Plugin API cannot reliably remove more than 1 slot default.
+Added children get real IDs and are fully modifiable (remove, findOne, setProperties all work).
+
+**Removing defaults:** The user handles this — select in Figma layers panel → Delete. The Plugin API can only remove 1 slot default per session.
 
 ## Text Styles
 
@@ -325,7 +331,7 @@ const maxX = Math.max(0, ...figma.currentPage.children.map(n => n.x + n.width)) 
 - Daemon times out on large evals (>30 lines). Break complex operations into small sequential evals. Use ES5 syntax (var, function()) — some eval contexts don't support arrow functions or const/let.
 - Aeonik Pro has no "Semibold" font style — use "Bold". Available: Regular, Medium, Bold, Light, Thin, Black, Air. Always `loadFontAsync` before changing text characters in eval.
 - `layoutPositioning = "ABSOLUTE"` must be set AFTER appending node to an auto-layout parent. Setting before throws "parent node has layoutMode NONE" error.
-- Instance sublayers in slots become permanently inaccessible after any mutation (`setProperties`/`remove`/`findOne` throw "does not exist"). The API can only `remove()` 1 default per slot. **Use `slot populate`** to add configured instances. Delete unwanted defaults manually in Figma layers panel (select → Delete).
+- Slot sublayer IDs break after `setProperties`/`remove`/`findOne` (1 call kills all siblings). `swapComponent` is safe for unlimited calls. Do swaps first, then 1 mutation if needed. User deletes extras in layers panel.
 - `findOne()` on nodes containing instances with slots crashes when it traverses into broken sublayer IDs. Use direct child indexing (`parent.children[0]`) when you know the structure.
 - Multiple `await figma.loadFontAsync()` in loops cause timeouts. Preload ONCE at start via temp instance: `var tmp = comp.createInstance(); await figma.loadFontAsync(tmp.findOne(fn).fontName); tmp.remove();`
 - `deleteComponentProperty(key)` removes a component property. NOT `removeComponentProperty` (doesn't exist). Key includes the hash suffix (e.g., `"Show Badge#6412:7"`).
