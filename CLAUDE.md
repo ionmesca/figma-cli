@@ -200,6 +200,7 @@ For components with optional leading/trailing icons, use the triple pattern:
 - **strokesIncludedInLayout = true** — when a frame uses both stroke and padding (like CSS `border + padding`), set this so the stroke is part of the layout. Without it, stroke overlaps with padding and content sits too close to the edge.
 - **No spacer frames** — use `layoutGrow = 1` on the element that should fill space
 - **Form-level add-ons stay form-level** — NumberField has no built-in EUR prefix. The form wraps it.
+- **Composition components use slots, not boolean toggles** — when a container accepts arbitrary children (PageHeader actions, NavigationTabList tabs), use `slot convert` for the content area. Pre-populate with realistic defaults. Don't use show/hide booleans for variable-count content.
 
 ### Using Existing Components
 - Always use `icon/*` components from the Icons page. Never create duplicate icon components.
@@ -263,39 +264,6 @@ Every `<Text>` that could be multi-word **must** have `w="fill"`, and its parent
 </Frame>
 ```
 
-### justify="between" Doesn't Work in render
-
-In `render` JSX, use a `grow={1}` spacer:
-
-```jsx
-<Frame flex="row" items="center">
-  <Text>Left</Text>
-  <Frame grow={1} />
-  <Text>Right</Text>
-</Frame>
-```
-
-In `eval`, use auto-layout alignment instead (no spacer needed):
-```javascript
-frame.primaryAxisAlignItems = "MAX";         // right-align children
-frame.primaryAxisAlignItems = "SPACE_BETWEEN"; // space between
-```
-
-### Content Overflow is Silent
-
-Fixed height too small for children + padding silently clips. Always verify: `childHeight + paddingTop + paddingBottom <= parentHeight`.
-
-### Full-Page Layouts
-
-One root frame with `flex="col"` and fixed width. Each section as a child with `w="fill"`:
-
-```jsx
-<Frame name="Page" w={1440} flex="col">
-  <Frame name="Header" w="fill" h={64} />
-  <Frame name="Content" w="fill" grow={1} />
-</Frame>
-```
-
 ### eval Positioning
 
 `render` has smart positioning. `eval` does not — elements land at (0,0). When using eval, find the rightmost edge first:
@@ -345,6 +313,11 @@ const maxX = Math.max(0, ...figma.currentPage.children.map(n => n.x + n.width)) 
 - Instance sublayers in slots cannot be removed or hidden via API (`set_visible`/`remove` throw "does not exist"). To replace slot content: rename existing default children's text, add extras via `createInstance()` + `slot.appendChild()`, hide excess with `.visible = false`.
 - `findOne()` on nodes containing instances with slots crashes when it traverses into broken sublayer IDs. Use direct child indexing (`parent.children[0]`) when you know the structure.
 - Multiple `await figma.loadFontAsync()` in loops cause timeouts. Preload ONCE at start via temp instance: `var tmp = comp.createInstance(); await figma.loadFontAsync(tmp.findOne(fn).fontName); tmp.remove();`
+- `deleteComponentProperty(key)` removes a component property. NOT `removeComponentProperty` (doesn't exist). Key includes the hash suffix (e.g., `"Show Badge#6412:7"`).
+- `strokeWeight` returns a Symbol when per-side weights differ. Use `strokeTopWeight`, `strokeBottomWeight`, `strokeLeftWeight`, `strokeRightWeight` instead.
+- `figma.createText()` defaults to Inter Regular. Load Inter BEFORE setting `.characters`, then apply a text style to fix to Aeonik Pro.
+- On ETIMEDOUT: restart daemon immediately (`daemon restart`). Don't retry the same eval — the daemon is stale.
+- Plan full component transformations before executing. Map all changes (fills, strokes, properties, slots), then batch into minimal evals. Don't patch incrementally.
 
 ## Batch Operations
 
