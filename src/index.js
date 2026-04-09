@@ -7293,10 +7293,9 @@ slot
   });
 
 slot
-  .command('replace <slotNodeId>')
-  .description('Replace all default slot children with new component instances')
+  .command('populate <slotNodeId>')
+  .description('Add configured component instances to a slot')
   .option('-c, --components <json>', 'JSON array of {componentId, properties?, text?} objects')
-  .option('--clear', 'Just clear defaults (swap to invisible) without adding new children')
   .action(async (slotNodeId, options) => {
     await checkConnection();
 
@@ -7306,25 +7305,6 @@ slot
       const slot = await figma.getNodeByIdAsync(${JSON.stringify(slotNodeId)});
       if (!slot) return { error: 'Slot node not found' };
 
-      // Create or find invisible placeholder component
-      let invisible = figma.root.findOne(n => n.type === 'COMPONENT' && n.name === '_slot_placeholder');
-      if (!invisible) {
-        invisible = figma.createComponent();
-        invisible.name = '_slot_placeholder';
-        invisible.resize(0.01, 0.01);
-        invisible.clipsContent = true;
-        invisible.fills = [];
-        invisible.x = 30000;
-        invisible.y = 30000;
-      }
-
-      // Swap all existing children to invisible (hides them without removing)
-      const defaultCount = slot.children.length;
-      for (let i = 0; i < defaultCount; i++) {
-        try { slot.children[i].swapComponent(invisible); } catch(e) { /* skip non-instances */ }
-      }
-
-      // Add new component instances
       const items = ${JSON.stringify(components)};
       const added = [];
 
@@ -7334,12 +7314,10 @@ slot
 
         const inst = comp.createInstance();
 
-        // Set boolean/swap properties
         if (item.properties) {
           inst.setProperties(item.properties);
         }
 
-        // Set text content
         if (item.text) {
           const entries = typeof item.text === 'string'
             ? [{ name: 'Label', value: item.text }]
@@ -7361,9 +7339,8 @@ slot
       return {
         success: true,
         slotName: slot.name || slot.id,
-        defaultsHidden: defaultCount,
-        added: added,
-        totalChildren: slot.children.length
+        defaults: slot.children.length - added.length,
+        added: added
       };
     })()`;
 
@@ -7372,7 +7349,10 @@ slot
       if (result.error) {
         console.log(chalk.red('✗ ' + result.error));
       } else {
-        console.log(chalk.green(`✓ Replaced slot "${result.slotName}": hid ${result.defaultsHidden} defaults, added ${result.added.length} children`));
+        console.log(chalk.green(`✓ Added ${result.added.length} children to slot "${result.slotName}"`));
+        if (result.defaults > 0) {
+          console.log(chalk.yellow(`  ⚠ ${result.defaults} default(s) — delete in Figma layers panel if unwanted`));
+        }
         for (const a of result.added) {
           if (a.error) {
             console.log(chalk.red(`  ✗ ${a.error}`));

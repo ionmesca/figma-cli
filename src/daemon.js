@@ -420,30 +420,6 @@ async function handleRequest(req, res) {
               result = await execWithTimeout(() => executeEval(renderCode), 90000); // 90s for renders with icons
               break;
             }
-            case 'eval-batch': {
-              // Execute multiple codes sequentially via plugin batch eval
-              // Each code runs in its own AsyncFunction context in the plugin
-              const { codes } = JSON.parse(body);
-              if (!codes || !Array.isArray(codes)) {
-                throw new Error('eval-batch requires a "codes" array');
-              }
-              if (isPluginConnected()) {
-                result = await execWithTimeout(() => evalBatchViaPlugin(codes), 60000);
-              } else {
-                // Fallback: sequential eval via CDP
-                const results = [];
-                for (const c of codes) {
-                  try {
-                    const r = await execWithTimeout(() => evalViaCdp(wrapCodeIfNeeded(c)));
-                    results.push({ success: true, result: r });
-                  } catch (err) {
-                    results.push({ success: false, error: err.message });
-                  }
-                }
-                result = results;
-              }
-              break;
-            }
             case 'render-batch': {
               // Single eval for ALL frames (10x faster than loop)
               const ClientClass = await getFigmaClient();
