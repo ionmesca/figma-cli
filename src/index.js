@@ -7292,6 +7292,100 @@ slot
     }
   });
 
+slot
+  .command('replace <slotNodeId>')
+  .description('Replace all default slot children with new component instances')
+  .option('-c, --components <json>', 'JSON array of {componentId, properties?, text?} objects')
+  .option('--clear', 'Just clear defaults (swap to invisible) without adding new children')
+  .action(async (slotNodeId, options) => {
+    await checkConnection();
+
+    const components = options.components ? JSON.parse(options.components) : [];
+
+    const code = `(async () => {
+      const slot = await figma.getNodeByIdAsync(${JSON.stringify(slotNodeId)});
+      if (!slot) return { error: 'Slot node not found' };
+
+      // Create or find invisible placeholder component
+      let invisible = figma.root.findOne(n => n.type === 'COMPONENT' && n.name === '_slot_placeholder');
+      if (!invisible) {
+        invisible = figma.createComponent();
+        invisible.name = '_slot_placeholder';
+        invisible.resize(0.01, 0.01);
+        invisible.clipsContent = true;
+        invisible.fills = [];
+        invisible.x = 30000;
+        invisible.y = 30000;
+      }
+
+      // Swap all existing children to invisible (hides them without removing)
+      const defaultCount = slot.children.length;
+      for (let i = 0; i < defaultCount; i++) {
+        try { slot.children[i].swapComponent(invisible); } catch(e) { /* skip non-instances */ }
+      }
+
+      // Add new component instances
+      const items = ${JSON.stringify(components)};
+      const added = [];
+
+      for (const item of items) {
+        const comp = await figma.getNodeByIdAsync(item.componentId);
+        if (!comp) { added.push({ error: 'Component not found: ' + item.componentId }); continue; }
+
+        const inst = comp.createInstance();
+
+        // Set boolean/swap properties
+        if (item.properties) {
+          inst.setProperties(item.properties);
+        }
+
+        // Set text content
+        if (item.text) {
+          const entries = typeof item.text === 'string'
+            ? [{ name: 'Label', value: item.text }]
+            : (Array.isArray(item.text) ? item.text : Object.entries(item.text).map(([name, value]) => ({ name, value })));
+
+          for (const entry of entries) {
+            const textNode = inst.findOne(n => n.type === 'TEXT' && n.name === entry.name);
+            if (textNode) {
+              await figma.loadFontAsync(textNode.fontName);
+              textNode.characters = entry.value;
+            }
+          }
+        }
+
+        slot.appendChild(inst);
+        added.push({ id: inst.id, name: inst.name });
+      }
+
+      return {
+        success: true,
+        slotName: slot.name || slot.id,
+        defaultsHidden: defaultCount,
+        added: added,
+        totalChildren: slot.children.length
+      };
+    })()`;
+
+    try {
+      const result = await fastEval(code);
+      if (result.error) {
+        console.log(chalk.red('✗ ' + result.error));
+      } else {
+        console.log(chalk.green(`✓ Replaced slot "${result.slotName}": hid ${result.defaultsHidden} defaults, added ${result.added.length} children`));
+        for (const a of result.added) {
+          if (a.error) {
+            console.log(chalk.red(`  ✗ ${a.error}`));
+          } else {
+            console.log(chalk.gray(`  + ${a.name} (${a.id})`));
+          }
+        }
+      }
+    } catch (e) {
+      console.log(chalk.red('✗ Failed: ' + e.message));
+    }
+  });
+
 // ============ EXPORT ============
 
 program
