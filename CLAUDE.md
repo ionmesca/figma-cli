@@ -358,6 +358,7 @@ const maxX = Math.max(0, ...figma.currentPage.children.map(n => n.x + n.width)) 
 - `layoutPositioning = "ABSOLUTE"` must be set AFTER appending node to an auto-layout parent. Setting before throws "parent node has layoutMode NONE" error.
 - Slot sublayer IDs break after `setProperties`/`remove`/`findOne` (1 call kills all siblings). `swapComponent` is safe for unlimited calls. Do swaps first, then 1 mutation if needed. User deletes extras in layers panel.
 - `findOne()` on nodes containing instances with slots crashes when it traverses into broken sublayer IDs. Use direct child indexing (`parent.children[0]`) when you know the structure.
+- Never hardcode node IDs across eval calls — slot children IDs change after `setProperties`, reconnection, or slot repopulation. Find nodes by name traversal within a single atomic eval.
 - Multiple `await figma.loadFontAsync()` in loops cause timeouts. Preload ONCE at start via temp instance: `var tmp = comp.createInstance(); await figma.loadFontAsync(tmp.findOne(fn).fontName); tmp.remove();`
 - `deleteComponentProperty(key)` removes a component property. NOT `removeComponentProperty` (doesn't exist). Key includes the hash suffix (e.g., `"Show Badge#6412:7"`).
 - `strokeWeight` returns a Symbol when per-side weights differ. Use `strokeTopWeight`, `strokeBottomWeight`, `strokeLeftWeight`, `strokeRightWeight` instead.
