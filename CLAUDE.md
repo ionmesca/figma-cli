@@ -238,6 +238,31 @@ For components with optional leading/trailing icons, use the triple pattern:
 4. Auto-layout frames hug content
 5. `verify` screenshot taken
 
+## Library (Team Library Access)
+
+Discover and import published components from Figma team libraries via the REST API.
+
+```bash
+# One-time setup (requires Figma personal access token)
+node src/index.js library setup
+
+# Sync all published components from team libraries
+node src/index.js library sync
+node src/index.js library sync --library "Design System (Agent Optimized)"
+
+# Search and browse cached components
+node src/index.js library search Button
+node src/index.js library list
+node src/index.js library list --library "Design System (Agent Optimized)"
+
+# Import into current Figma file (requires Figma connection)
+node src/index.js library import Button           # imports component definition
+node src/index.js library import Button --instance # creates an instance
+node src/index.js library info Button              # shows variants + properties
+```
+
+The `sync` command fetches from Figma's REST API and caches to `~/.figma-ds-cli/library-registry.json`. Component keys are stable across publishes — only re-sync when new components are added. `import` and `info` use the existing CDP/Plugin API connection.
+
 ## Recipes
 
 ```bash

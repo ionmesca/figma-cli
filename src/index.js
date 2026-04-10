@@ -322,6 +322,48 @@ function saveConfig(config) {
   writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
 }
 
+// Library registry
+const LIBRARY_REGISTRY_FILE = join(CONFIG_DIR, 'library-registry.json');
+
+// Helper: Figma REST API fetch
+async function figmaRestApi(path) {
+  const config = loadConfig();
+  if (!config.figmaToken) throw new Error('No Figma token configured. Run: library setup');
+  const res = await fetch(`https://api.figma.com/v1${path}`, {
+    headers: { 'X-Figma-Token': config.figmaToken }
+  });
+  if (!res.ok) throw new Error(`Figma API ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+// Helper: Load library registry
+function loadRegistry() {
+  try {
+    if (existsSync(LIBRARY_REGISTRY_FILE)) {
+      return JSON.parse(readFileSync(LIBRARY_REGISTRY_FILE, 'utf8'));
+    }
+  } catch {}
+  return null;
+}
+
+// Helper: Save library registry
+function saveRegistry(data) {
+  if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true });
+  writeFileSync(LIBRARY_REGISTRY_FILE, JSON.stringify(data, null, 2));
+}
+
+// Helper: Extract team ID from URL or raw ID
+function parseTeamId(input) {
+  const match = input.match(/team\/(\d+)/);
+  return match ? match[1] : input.replace(/\D/g, '');
+}
+
+// Helper: Extract file key from Figma URL or raw key
+function parseFileKey(input) {
+  const match = input.match(/figma\.com\/(?:design|file)\/([a-zA-Z0-9]+)/);
+  return match ? match[1] : input.trim();
+}
+
 // Singleton FigmaClient instance
 let _figmaClient = null;
 
@@ -8387,6 +8429,349 @@ blocksCmd
       spinner.succeed(`Created ${block.name} (${nodeId})`);
     } catch (e) {
       spinner.fail(`Failed to create ${block.name}: ${e.message}`);
+    }
+  });
+
+// ============ Library Commands ============
+
+const library = program
+  .command('library')
+  .alias('lib')
+  .description('Team library operations — discover, search, and import published components');
+
+library
+  .command('setup')
+  .description('Configure Figma personal access token and team ID')
+  .action(async () => {
+    const config = loadConfig();
+    console.log(chalk.bold('Figma Library Setup\n'));
+
+    const token = await prompt('Figma personal access token (figd_...): ');
+    if (!token.trim()) { console.log(chalk.red('Token required.')); return; }
+
+    const spinner = ora('Validating token...').start();
+    try {
+      const res = await fetch('https://api.figma.com/v1/me', {
+        headers: { 'X-Figma-Token': token.trim() }
+      });
+      if (!res.ok) { spinner.fail('Invalid token'); return; }
+      const me = await res.json();
+      spinner.succeed(`Authenticated as ${chalk.green(me.handle || me.email)}`);
+    } catch (e) {
+      spinner.fail(`Connection failed: ${e.message}`);
+      return;
+    }
+
+    const fileInput = await prompt('Design system file URL or key (figma.com/design/XXXXX/...): ');
+    const libraryFileKey = parseFileKey(fileInput);
+    if (!libraryFileKey) { console.log(chalk.red('Could not parse file key.')); return; }
+
+    // Validate file access
+    const fileSpinner = ora('Checking file access...').start();
+    try {
+      const fileRes = await fetch(`https://api.figma.com/v1/files/${libraryFileKey}?depth=1`, {
+        headers: { 'X-Figma-Token': token.trim() }
+      });
+      if (!fileRes.ok) { fileSpinner.fail('Cannot access file. Check the URL and permissions.'); return; }
+      const fileData = await fileRes.json();
+      fileSpinner.succeed(`Library file: ${chalk.green(fileData.name)}`);
+    } catch (e) {
+      fileSpinner.fail(`File check failed: ${e.message}`);
+      return;
+    }
+
+    // Optional team ID for broader search
+    const teamInput = await prompt('Team ID or URL (optional, press Enter to skip): ');
+    const teamId = teamInput.trim() ? parseTeamId(teamInput) : null;
+
+    config.figmaToken = token.trim();
+    config.libraryFileKey = libraryFileKey;
+    if (teamId) config.teamId = teamId;
+    saveConfig(config);
+    console.log(chalk.green(`\nSaved. Library file: ${libraryFileKey}`));
+    console.log(chalk.dim('Run: library sync'));
+  });
+
+library
+  .command('sync')
+  .description('Fetch all published components from the design system library')
+  .option('--file <key>', 'Override library file key')
+  .option('--team', 'Use team-level endpoint instead of file-level')
+  .option('--no-icons', 'Exclude icon/* components (default: excluded)')
+  .action(async (options) => {
+    const config = loadConfig();
+    if (!config.figmaToken) {
+      console.log(chalk.red('Run "library setup" first.')); return;
+    }
+
+    const fileKey = options.file || config.libraryFileKey;
+    if (!fileKey && !options.team) {
+      console.log(chalk.red('No library file configured. Run "library setup" or pass --file <key>.')); return;
+    }
+
+    const spinner = ora('Fetching published components...').start();
+    const components = {};
+    let totalFetched = 0;
+    let iconCount = 0;
+
+    try {
+      if (options.team && config.teamId) {
+        // Team-level fetch (paginated, all libraries)
+        for (const type of ['component_sets', 'components']) {
+          let cursor = null;
+          let page = 0;
+          do {
+            const qs = cursor ? `?page_size=100&after=${cursor}` : '?page_size=100';
+            const data = await figmaRestApi(`/teams/${config.teamId}/${type}${qs}`);
+            const meta = data.meta || {};
+            const items = meta[type] || meta.components || {};
+
+            for (const [, comp] of Object.entries(items)) {
+              if (comp.name.startsWith('icon/')) { iconCount++; continue; }
+              components[comp.name] = {
+                key: comp.key,
+                type: type === 'component_sets' ? 'component_set' : 'component',
+                description: (comp.description || '').slice(0, 200),
+                library: comp.containing_frame?.file_name || comp.file_name || 'Unknown',
+                fileKey: comp.file_key || '',
+                updatedAt: comp.updated_at || comp.created_at || ''
+              };
+              totalFetched++;
+            }
+            cursor = meta.cursor?.after || null;
+            page++;
+            spinner.text = `Fetching ${type} (page ${page})... ${totalFetched} found`;
+          } while (cursor);
+        }
+      } else {
+        // File-level fetch (single request per endpoint, no pagination needed)
+        // Get file name first
+        spinner.text = 'Getting file info...';
+        const fileInfo = await figmaRestApi(`/files/${fileKey}?depth=1`);
+        const fileName = fileInfo.name || fileKey;
+        spinner.text = `Syncing from "${fileName}"...`;
+
+        for (const type of ['component_sets', 'components']) {
+          spinner.text = `Fetching ${type}...`;
+          const data = await figmaRestApi(`/files/${fileKey}/${type}`);
+          const items = data.meta?.[type] || data.meta?.components || [];
+
+          // File endpoint returns an array
+          const list = Array.isArray(items) ? items : Object.values(items);
+          for (const comp of list) {
+            if (comp.name.startsWith('icon/')) { iconCount++; continue; }
+            // Skip individual variant components (contain "=")
+            if (type === 'components' && comp.name.includes('=')) continue;
+
+            components[comp.name] = {
+              key: comp.key,
+              type: type === 'component_sets' ? 'component_set' : 'component',
+              description: (comp.description || '').slice(0, 200),
+              library: comp.containing_frame?.file_name || comp.file_name || fileName,
+              fileKey: fileKey,
+              updatedAt: comp.updated_at || comp.created_at || ''
+            };
+            totalFetched++;
+          }
+        }
+      }
+
+      saveRegistry({
+        syncedAt: new Date().toISOString(),
+        libraryFileKey: fileKey,
+        teamId: config.teamId || null,
+        components
+      });
+
+      spinner.succeed(`Synced ${chalk.green(totalFetched)} components + ${iconCount} icons skipped → ${chalk.dim(LIBRARY_REGISTRY_FILE)}`);
+    } catch (e) {
+      spinner.fail(`Sync failed: ${e.message}`);
+    }
+  });
+
+library
+  .command('search <query>')
+  .description('Search cached library components by name')
+  .action((query) => {
+    const registry = loadRegistry();
+    if (!registry) { console.log(chalk.red('No registry. Run: library sync')); return; }
+
+    const q = query.toLowerCase();
+    const matches = Object.entries(registry.components)
+      .filter(([name]) => name.toLowerCase().includes(q))
+      .sort((a, b) => a[0].localeCompare(b[0]));
+
+    if (matches.length === 0) {
+      console.log(chalk.yellow(`No matches for "${query}"`)); return;
+    }
+
+    console.log(chalk.bold(`${matches.length} match${matches.length > 1 ? 'es' : ''} for "${query}":\n`));
+    for (const [name, comp] of matches) {
+      console.log(`  ${chalk.green(name)} ${chalk.dim(`(${comp.type})`)} — ${chalk.cyan(comp.library)}`);
+      if (comp.description) console.log(`    ${chalk.dim(comp.description.split('\n')[0])}`);
+      console.log(`    key: ${chalk.dim(comp.key)}`);
+    }
+  });
+
+library
+  .command('list')
+  .description('List all cached library components')
+  .option('-l, --library <name>', 'Filter by library name')
+  .action((options) => {
+    const registry = loadRegistry();
+    if (!registry) { console.log(chalk.red('No registry. Run: library sync')); return; }
+
+    let entries = Object.entries(registry.components);
+    if (options.library) {
+      entries = entries.filter(([, c]) => c.library.includes(options.library));
+    }
+    entries.sort((a, b) => a[0].localeCompare(b[0]));
+
+    console.log(chalk.bold(`${entries.length} components (synced ${chalk.dim(registry.syncedAt)})\n`));
+
+    // Group by library
+    const byLib = {};
+    for (const [name, comp] of entries) {
+      const lib = comp.library;
+      if (!byLib[lib]) byLib[lib] = [];
+      byLib[lib].push({ name, ...comp });
+    }
+
+    for (const [lib, comps] of Object.entries(byLib)) {
+      console.log(chalk.cyan.bold(`\n${lib} (${comps.length})`));
+      for (const c of comps) {
+        const tag = c.type === 'component_set' ? chalk.magenta('set') : chalk.blue('comp');
+        console.log(`  ${tag} ${c.name}`);
+      }
+    }
+  });
+
+library
+  .command('import <name>')
+  .description('Import a library component into the current Figma file')
+  .option('-x <n>', 'X position', parseInt)
+  .option('-y <n>', 'Y position', parseInt)
+  .option('--instance', 'Create an instance (default: import component definition)')
+  .action(async (name, options) => {
+    const registry = loadRegistry();
+    if (!registry) { console.log(chalk.red('No registry. Run: library sync')); return; }
+
+    // Exact match first, then case-insensitive
+    let comp = registry.components[name];
+    if (!comp) {
+      const match = Object.entries(registry.components)
+        .find(([k]) => k.toLowerCase() === name.toLowerCase());
+      if (match) { comp = match[1]; name = match[0]; }
+    }
+    if (!comp) {
+      console.log(chalk.red(`"${name}" not in registry. Try: library search ${name}`)); return;
+    }
+
+    const spinner = ora(`Importing ${name}...`).start();
+    try {
+      if (options.instance) {
+        const x = options.x !== undefined ? options.x : undefined;
+        const y = options.y !== undefined ? options.y : undefined;
+        const result = await fastEval(`
+          (async function() {
+            var comp = await figma.importComponentByKeyAsync(${JSON.stringify(comp.key)});
+            var inst = comp.createInstance();
+            ${x !== undefined ? `inst.x = ${x};` : ''}
+            ${y !== undefined ? `inst.y = ${y};` : ''}
+            return { id: inst.id, name: inst.name, x: inst.x, y: inst.y };
+          })()
+        `);
+        spinner.succeed(`Created instance of ${chalk.green(name)} (${result.id})`);
+      } else {
+        const result = await fastEval(`
+          (async function() {
+            var comp;
+            try {
+              comp = await figma.importComponentSetByKeyAsync(${JSON.stringify(comp.key)});
+            } catch(e) {
+              comp = await figma.importComponentByKeyAsync(${JSON.stringify(comp.key)});
+            }
+            return { id: comp.id, name: comp.name, type: comp.type, key: comp.key };
+          })()
+        `);
+        spinner.succeed(`Imported ${chalk.green(result.name)} (${result.type}) — ${result.id}`);
+      }
+    } catch (e) {
+      spinner.fail(`Import failed: ${e.message}`);
+    }
+  });
+
+library
+  .command('info <name>')
+  .description('Show detailed component properties and variants')
+  .action(async (name) => {
+    const registry = loadRegistry();
+    if (!registry) { console.log(chalk.red('No registry. Run: library sync')); return; }
+
+    let comp = registry.components[name];
+    if (!comp) {
+      const match = Object.entries(registry.components)
+        .find(([k]) => k.toLowerCase() === name.toLowerCase());
+      if (match) { comp = match[1]; name = match[0]; }
+    }
+    if (!comp) {
+      console.log(chalk.red(`"${name}" not in registry.`)); return;
+    }
+
+    console.log(chalk.bold(name));
+    console.log(`  Type:    ${comp.type}`);
+    console.log(`  Library: ${comp.library}`);
+    console.log(`  Key:     ${chalk.dim(comp.key)}`);
+    if (comp.description) console.log(`  Desc:    ${comp.description}`);
+
+    const spinner = ora('Fetching component properties from Figma...').start();
+    try {
+      const result = await fastEval(`
+        (async function() {
+          var comp;
+          try {
+            comp = await figma.importComponentSetByKeyAsync(${JSON.stringify(comp.key)});
+          } catch(e) {
+            comp = await figma.importComponentByKeyAsync(${JSON.stringify(comp.key)});
+          }
+          var props = {};
+          var defs = comp.componentPropertyDefinitions || {};
+          for (var k in defs) {
+            var d = defs[k];
+            props[k] = { type: d.type, defaultValue: d.defaultValue };
+            if (d.variantOptions) props[k].options = d.variantOptions;
+          }
+          var variants = comp.type === "COMPONENT_SET"
+            ? comp.children.map(function(c) { return c.name; })
+            : null;
+          return { name: comp.name, type: comp.type, properties: props, variants: variants };
+        })()
+      `);
+
+      spinner.stop();
+
+      if (result.variants) {
+        console.log(chalk.bold(`\n  Variants (${result.variants.length}):`));
+        for (const v of result.variants.slice(0, 20)) {
+          console.log(`    ${chalk.dim(v)}`);
+        }
+        if (result.variants.length > 20) console.log(chalk.dim(`    ... +${result.variants.length - 20} more`));
+      }
+
+      const props = result.properties;
+      const propKeys = Object.keys(props);
+      if (propKeys.length > 0) {
+        console.log(chalk.bold(`\n  Properties (${propKeys.length}):`));
+        for (const k of propKeys) {
+          const p = props[k];
+          const label = k.replace(/#[^#]+$/, '');
+          const val = p.options ? p.options.join(' | ') : String(p.defaultValue ?? '');
+          console.log(`    ${chalk.cyan(p.type)} ${label} = ${chalk.dim(val)}`);
+        }
+      }
+    } catch (e) {
+      spinner.fail(`Could not fetch properties: ${e.message}`);
+      console.log(chalk.dim('  (Figma connection required for property introspection)'));
     }
   });
 
